@@ -1,0 +1,103 @@
+name: release
+
+# On a version tag: build CGO-free binaries for every supported platform,
+# attach them to a GitHub Release with checksums, then publish the npm wrapper
+# with the matching version. The npm wrapper downloads the release asset for
+# the user's platform at install time, so the tag version and the npm package
+# version must stay in sync.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build and package
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+
+          mkdir -p dist
+          CGO_ENABLED=0 go build \
+            -trimpath \
+            -ldflags "-s -w -X opencode-rag/internal/version.Version=${version}" \
+            -o "dist/opencode-memory-mcp${ext}" ./cmd/opencode-memory-mcp
+          cp README.md dist/ 2>/dev/null || true
+
+          name="opencode-memory-mcp_${version}_${GOOS}_${GOARCH}"
+          tar -czf "${name}.tar.gz" -C dist .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opencode-memory-mcp_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: "*.tar.gz"
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.tar.gz > checksums.txt
+          cat checksums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
+
+  npm:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Set package version from tag
+        working-directory: npm
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm
+        working-directory: npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

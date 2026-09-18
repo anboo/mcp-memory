@@ -1,6 +1,9 @@
 # Binaries
 /bin/
 
+# npm wrapper dependencies
+/npm/node_modules/
+
 # Embedding cache and local data (not committed)
 /storage/
 

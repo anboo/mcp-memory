@@ -80,7 +80,7 @@ type VectorProvider interface {
 
 // LexicalSource is an optional secondary lexical index (Bleve). It is defined
 // here so the search package does not depend on the Bleve implementation; the
-// concrete type is wired in cmd/mcp.
+// concrete type is wired in internal/cli.
 type LexicalSource interface {
 	Search(ctx context.Context, q Query) ([]Hit, error)
 }

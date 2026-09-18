@@ -60,9 +60,9 @@ Two stores are used on purpose:
 
 ```
 cmd/
-  indexer/main.go        indexing and diagnostics
-  mcp/main.go            MCP server (stdio)
+  opencode-memory-mcp/   the single binary; dispatches to subcommands
 internal/
+  cli/                   subcommands: serve (MCP) and index/sessions/session
   config/                configuration from env
   extract/               read SQLite: sessions, messages, parts, coordinates
   chunk/                 part -> chunk policy
@@ -74,6 +74,9 @@ internal/
   bleveidx/              Bleve secondary lexical index
   indexer/               indexing pipeline and progress reporting
   mcp/                   MCP tools: search/read/session/context/status
+  version/               build version, set at link time
+npm/                     npm wrapper: downloads the binary, writes MCP config
+.github/workflows/       release workflow: binaries + checksums + npm publish
 migrations/              numbered SQL migrations, embedded with go:embed
 storage/                 embedding cache (not in git)
 research/                research spike (gitignored, separate Go module)
@@ -100,23 +103,29 @@ index. They need no network, no database and no Ollama. Verify the CGO-free
 build explicitly:
 
 ```bash
-CGO_ENABLED=0 go build ./cmd/indexer ./cmd/mcp
+CGO_ENABLED=0 go build ./cmd/opencode-memory-mcp
+```
+
+The npm wrapper has its own tests (config merge, asset naming):
+
+```bash
+cd npm && npm install && npm test
 ```
 
 ### Running against a real opencode.db
 
 ```bash
 # Diagnostics first: what is in the source database?
-go run ./cmd/indexer --all
-go run ./cmd/indexer --session ses_xxx
+go run ./cmd/opencode-memory-mcp sessions
+go run ./cmd/opencode-memory-mcp session ses_xxx
 
 # Index a few sessions into a throwaway index.
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/indexer --index --limit 3
+  go run ./cmd/opencode-memory-mcp index --limit 3
 
 # Run the MCP server against that index.
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/mcp
+  go run ./cmd/opencode-memory-mcp serve
 ```
 
 `opencode.db` is opened with `mode=ro`. Never write to it, not even in a tool
@@ -215,6 +224,30 @@ the source so search and read always agree.
 `tail_start_id` and sets `Session.Compacted`. The compaction part itself is not
 indexed. This lets the agent know that history before `tail_start_id` was
 compacted but is still searchable.
+
+## Releasing
+
+Releases are cut by pushing a version tag. `.github/workflows/release.yml`
+then:
+
+1. builds the `CGO_ENABLED=0` single binary for linux/darwin/windows on
+   amd64/arm64 and injects the version with
+   `-ldflags "-X opencode-rag/internal/version.Version=<version>"`;
+2. attaches one `opencode-memory-mcp_<version>_<os>_<arch>.tar.gz` per target
+   plus `checksums.txt` to a GitHub Release;
+3. publishes the npm wrapper `opencode-memory-mcp` at the same version, so the
+   wrapper downloads the matching asset.
+
+Before the first release, add an `NPM_TOKEN` repository secret (an npm
+automation token with publish rights). Then:
+
+```bash
+git tag v0.4.0
+git push origin v0.4.0
+```
+
+Keep the tag and the npm package versions equal: the wrapper builds the asset
+name and download URL from its own `package.json` version.
 
 ## Commit and review rules
 

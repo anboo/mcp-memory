@@ -1,14 +1,4 @@
-// Command indexer builds the local memory index from the OpenCode source
-// database.
-//
-// Modes:
-//
-//	--all              summary of the whole database (diagnostics)
-//	--session <id>     dump one session dialog (diagnostics)
-//	--index            index sessions into memory.db and the Bleve index
-//	--project <path>   restrict indexing to one project worktree
-//	--limit N          cap the number of sessions indexed in this run
-package main
+package cli
 
 import (
 	"context"
@@ -28,43 +18,90 @@ import (
 	"opencode-rag/internal/store"
 )
 
-func main() {
-	var (
-		all        = flag.Bool("all", false, "show a summary of all sessions")
-		session    = flag.String("session", "", "dump the dialog of one session")
-		index      = flag.Bool("index", false, "index sessions into the local index")
-		project    = flag.String("project", "", "restrict indexing to one project worktree")
-		limit      = flag.Int("limit", 0, "maximum sessions to index in this run (0 = all)")
-		dialogN    = flag.Int("dialog-limit", 40, "maximum parts printed in a dialog dump")
-		embedPause = flag.Duration("embed-pause", 150*time.Millisecond, "pause between embedding batches")
-		noBleve    = flag.Bool("no-bleve", false, "do not build or update the Bleve index")
-		backfill   = flag.Bool("backfill", true, "compute vectors for chunks that have none yet")
-	)
-	flag.Parse()
+// indexCmd builds or updates the local index.
+func indexCmd(args []string) int {
+	fs := flag.NewFlagSet("index", flag.ContinueOnError)
+	project := fs.String("project", "", "restrict indexing to one project worktree")
+	limit := fs.Int("limit", 0, "maximum sessions to index in this run (0 = all)")
+	embedPause := fs.Duration("embed-pause", 150*time.Millisecond, "pause between embedding batches")
+	noBleve := fs.Bool("no-bleve", false, "do not build or update the Bleve index")
+	backfill := fs.Bool("backfill", true, "compute vectors for chunks that have none yet")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp index [flags]")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	db, err := extract.Open(cfg.SQLitePath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
 
-	ctx := context.Background()
-	switch {
-	case *index:
-		runIndex(ctx, db, cfg, *project, *limit, *embedPause, *noBleve, *backfill)
-	case *all:
-		runSummary(ctx, db)
-	case *session != "":
-		runSession(ctx, db, *session, *dialogN)
-	default:
-		flag.Usage()
-		os.Exit(2)
+	runIndex(context.Background(), db, cfg, *project, *limit, *embedPause, *noBleve, *backfill)
+	return 0
+}
+
+// sessionsCmd prints a summary of the whole OpenCode database (diagnostics).
+func sessionsCmd(args []string) int {
+	fs := flag.NewFlagSet("sessions", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp sessions")
 	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+	db, err := extract.Open(cfg.SQLitePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	runSummary(context.Background(), db)
+	return 0
+}
+
+// sessionCmd dumps the dialog of one session (diagnostics).
+func sessionCmd(args []string) int {
+	fs := flag.NewFlagSet("session", flag.ContinueOnError)
+	dialogN := fs.Int("dialog-limit", 40, "maximum parts printed in a dialog dump")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp session <session_id> [flags]")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(os.Stderr, "session: exactly one session id is required")
+		fs.Usage()
+		return 2
+	}
+	sessionID := fs.Arg(0)
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+	db, err := extract.Open(cfg.SQLitePath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	runSession(context.Background(), db, sessionID, *dialogN)
+	return 0
 }
 
 // runIndex opens the local index, resolves the optional embedder and Bleve

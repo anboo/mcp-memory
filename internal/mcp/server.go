@@ -8,13 +8,12 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+
+	"opencode-rag/internal/version"
 )
 
-// serverName and serverVersion identify this MCP server.
-const (
-	serverName    = "opencode-memory"
-	serverVersion = "0.3.0"
-)
+// serverName identifies this MCP server.
+const serverName = "opencode-memory"
 
 // instructions is the server-level prompt. It is returned in the initialize
 // response and tells the model when and how to use the memory tools.
@@ -53,7 +52,7 @@ func New(deps Dependencies, lim Limiter) (*Server, error) {
 		return nil, fmt.Errorf("mcp: source database is required")
 	}
 	s := &Server{
-		server: server.NewMCPServer(serverName, serverVersion,
+		server: server.NewMCPServer(serverName, version.Version,
 			server.WithInstructions(instructions)),
 		deps: deps,
 		lim:  lim,

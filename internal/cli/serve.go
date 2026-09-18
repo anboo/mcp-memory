@@ -1,23 +1,10 @@
-// Command mcp runs the memory MCP server over stdio.
-//
-// It reads originals from the OpenCode source database (read-only) and search
-// candidates from the local SQLite index, with an optional Bleve secondary
-// index. Both optional sources degrade gracefully.
-//
-// Configuration (environment):
-//
-//	MEMORY_SQLITE     path to opencode.db (default ~/.local/share/opencode/opencode.db)
-//	MEMORY_DB         path to memory.db  (default ~/.local/share/opencode/memory.db)
-//	MEMORY_BLEVE      path to the Bleve index directory
-//	MEMORY_EMBED_URL  embedding server base URL (default http://localhost:11434)
-//	MEMORY_EMBED_DIM  embedding dimension (default 1024)
-//	MEMORY_EMBED_MODEL embedding model (default bge-m3)
-package main
+package cli
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"opencode-rag/internal/bleveidx"
@@ -27,9 +14,27 @@ import (
 	"opencode-rag/internal/mcp"
 	"opencode-rag/internal/search"
 	"opencode-rag/internal/store"
+	"opencode-rag/internal/version"
 )
 
-func main() {
+// serve runs the MCP server over stdio. It reads originals from the OpenCode
+// source database (read-only) and search candidates from the local index, with
+// an optional Bleve secondary index. Both optional sources degrade gracefully.
+func serve(args []string) int {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	showVersion := fs.Bool("version", false, "print the version and exit")
+	fs.Usage = func() {
+		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp serve")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *showVersion {
+		fmt.Println("opencode-memory-mcp " + version.Version)
+		return 0
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
@@ -87,7 +92,7 @@ func main() {
 	if err := srv.ServeStdio(); err != nil {
 		log.Fatal(err)
 	}
-	os.Exit(0)
+	return 0
 }
 
 // queryEmbedder adapts embed.Client to search.VectorProvider.

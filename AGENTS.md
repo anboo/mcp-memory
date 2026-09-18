@@ -38,15 +38,17 @@ go build ./...
 go vet ./...
 go test ./...
 
-# CGO-free production binaries:
-CGO_ENABLED=0 go build -o bin/indexer ./cmd/indexer
-CGO_ENABLED=0 go build -o bin/mcp ./cmd/mcp
+# CGO-free production binary (single binary, subcommands):
+CGO_ENABLED=0 go build -o bin/opencode-memory-mcp ./cmd/opencode-memory-mcp
 ```
 
 Run a single package's tests:
 
 ```bash
-go test ./internal/store/ ./internal/search/ ./internal/migrate/ ./internal/indexer/ ./internal/mcp/
+go test ./internal/store/ ./internal/search/ ./internal/migrate/ ./internal/indexer/ ./internal/mcp/ ./internal/cli/
+
+# npm wrapper tests (config merge, asset naming):
+cd npm && npm install && npm test
 ```
 
 Research module (optional, separate, gitignored):
@@ -59,17 +61,21 @@ cd research && go build ./...
 
 ```bash
 # Diagnostics against the real database.
-go run ./cmd/indexer --all
-go run ./cmd/indexer --session ses_xxx
+go run ./cmd/opencode-memory-mcp sessions
+go run ./cmd/opencode-memory-mcp session ses_xxx
 
 # Index a few sessions into a throwaway index (never touches opencode.db).
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/indexer --index --limit 3
+  go run ./cmd/opencode-memory-mcp index --limit 3
 
 # Serve MCP over stdio against that index.
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/mcp
+  go run ./cmd/opencode-memory-mcp serve
 ```
+
+Do not run the MCP server with no arguments in a terminal: with no subcommand
+and a TTY on stdin it prints help instead (and serves when stdin is a pipe,
+which is how MCP clients launch it).
 
 The MCP server speaks JSON-RPC over stdio: send `initialize`, `tools/list`,
 `tools/call`. It starts even when the index is empty or the optional sources
@@ -78,8 +84,8 @@ are unavailable.
 ## Layout
 
 ```
-cmd/indexer/       indexing CLI and diagnostics
-cmd/mcp/           MCP server over stdio
+cmd/opencode-memory-mcp/  single binary; dispatches to subcommands
+internal/cli/      subcommands: serve (MCP) and index/sessions/session
 internal/config/   environment configuration
 internal/extract/  read opencode.db (read-only): sessions, messages, parts
 internal/chunk/    part -> chunk policy
@@ -91,6 +97,9 @@ internal/search/   hybrid retrieval: FTS + vector + Bleve, RRF merge k=60
 internal/bleveidx/ Bleve secondary lexical index (CGO-free, no vector path)
 internal/indexer/  indexing pipeline, concurrent Bleve goroutine, progress
 internal/mcp/      MCP tools: search/read/session/context/status
+internal/version/  build version, set with -ldflags at release time
+npm/               npm wrapper: downloads the release binary, writes config
+.github/workflows/ release workflow: binaries + checksums + npm publish
 migrations/        numbered .sql files, embedded via go:embed
 ```
 

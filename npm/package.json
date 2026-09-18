@@ -1,0 +1,39 @@
+{
+  "name": "opencode-memory-mcp",
+  "version": "0.0.0-dev",
+  "description": "Agent memory over the OpenCode session history, served over MCP (stdio). Downloads the CGO-free Go binary for your platform on first run.",
+  "keywords": [
+    "opencode",
+    "mcp",
+    "model-context-protocol",
+    "memory",
+    "rag",
+    "sqlite",
+    "embeddings"
+  ],
+  "homepage": "https://github.com/anboo/opencode-memory-mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/anboo/opencode-memory-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anboo/opencode-memory-mcp/issues"
+  },
+  "bin": {
+    "opencode-memory-mcp": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "tar": "^7.4.3"
+  }
+}
