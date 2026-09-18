@@ -1,4 +1,4 @@
-module opencode-rag
+module github.com/anboo/mcp-memory
 
 go 1.26.7
 

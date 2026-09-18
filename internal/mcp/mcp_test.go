@@ -8,8 +8,8 @@ import (
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 
-	"opencode-rag/internal/search"
-	"opencode-rag/internal/store"
+	"github.com/anboo/mcp-memory/internal/search"
+	"github.com/anboo/mcp-memory/internal/store"
 )
 
 type fakeStatus struct {

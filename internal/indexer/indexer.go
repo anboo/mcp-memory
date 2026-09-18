@@ -13,9 +13,9 @@ import (
 	"fmt"
 	"time"
 
-	"opencode-rag/internal/chunk"
-	"opencode-rag/internal/extract"
-	"opencode-rag/internal/store"
+	"github.com/anboo/mcp-memory/internal/chunk"
+	"github.com/anboo/mcp-memory/internal/extract"
+	"github.com/anboo/mcp-memory/internal/store"
 )
 
 // Embedder computes embeddings for a batch of texts.

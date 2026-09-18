@@ -17,11 +17,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"opencode-rag/internal/chunk"
-	"opencode-rag/internal/extract"
-	"opencode-rag/internal/migrate"
-	"opencode-rag/internal/stem"
-	"opencode-rag/migrations"
+	"github.com/anboo/mcp-memory/internal/chunk"
+	"github.com/anboo/mcp-memory/internal/extract"
+	"github.com/anboo/mcp-memory/internal/migrate"
+	"github.com/anboo/mcp-memory/internal/stem"
+	"github.com/anboo/mcp-memory/migrations"
 
 	_ "modernc.org/sqlite"
 	_ "modernc.org/sqlite/vec" // registers the vec0 virtual table via auto extension

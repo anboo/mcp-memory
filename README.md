@@ -1,4 +1,4 @@
-# opencode-rag
+# mcp-memory
 
 Agent memory over the full OpenCode session history.
 
@@ -64,9 +64,86 @@ Two stores are used on purpose:
 The optional **Bleve** index adds a stronger lexical layer for Russian natural
 language. It can be absent: search then degrades to SQLite only.
 
+## Storage: SQLite and Bleve
+
+Two local, serverless stores hold everything. There is no PostgreSQL, no
+external service and no CGO.
+
+### `memory.db` (SQLite, writable)
+
+A single file with FTS5 full text, sqlite-vec vectors and coordinates. The
+schema lives in `migrations/0001_init.sql`; the vec0 table is created by
+`internal/migrate.EnsureVectorTable` because its width comes from
+`MEMORY_EMBED_DIM`.
+
+| Object | Kind | Holds |
+|--------|------|-------|
+| `chunks` | table | one row per indexed part: ids, project, part type, tool, command, `content`, `snippet`, `files`, `position`, times, `truncated`, `embed_text`, `stemmed`, `embedded` |
+| `fts_unicode` | FTS5 (unicode61) | raw `content`, external-content over `chunks` |
+| `fts_stem` | FTS5 (unicode61) | Snowball-russian `stemmed` copy, external-content over `chunks` |
+| `vec_chunks` | vec0 (sqlite-vec) | KNN embeddings, `rowid` matches `chunks`, width = `MEMORY_EMBED_DIM` |
+| `sessions` | table | session metadata for status and project mapping |
+| `sync_state` | table | per-session status (`pending`/`indexed`/`error`) and `last_time_updated` |
+| `sync_lease` | table | single-row writer lease so one process writes the index |
+| `meta` | table | embedding dimension and model, schema notes |
+
+Triggers on `chunks` keep both FTS tables in sync automatically. A partial
+index on `embedded` makes pending-vector backfill cheap.
+
+### `memory.bleve` (Bleve, optional)
+
+A local, CGO-free lexical index. Its mapping uses:
+
+- `content` with the Russian analyzer (morphology, stop words);
+- `content_exact` with the simple analyzer (exact identifiers, no stemming);
+- stored `session_id`, `position`, `project_path`, `part_type`, `role`, `tool`,
+  `time_created`, `snippet` for coordinates and display.
+
+Bleve's own vector path (which needs CGO) is intentionally not used; vectors
+live in sqlite-vec. If the directory is missing or locked, search degrades to
+SQLite only.
+
+### `opencode.db` (read-only)
+
+The OpenCode source. It is opened with `mode=ro` and is never written. The
+index holds coordinates; `memory_read` recomputes them from this database so
+originals are always fresh.
+
+## Indexing pipeline
+
+`mcp-memory index` runs the full pipeline. Stages:
+
+1. **Extract.** Open `opencode.db` read-only, list sessions and parts.
+   Incremental: a session is processed only when it has no `sync_state` row
+   (new), its status is `error` (retry), or `time_updated` is newer than the
+   last indexed value. `--project` and `--limit` narrow the run.
+2. **Order.** `position` is assigned by ordering parts on
+   `(message.time_created, part.rowid)`, the only stable tie breaker.
+3. **Chunk.** Each part becomes one chunk: `text` and `tool` are embedded,
+   `patch` and `reasoning` go to FTS only. Tool output is capped at 4 KiB in
+   `content`; embedding text uses at most 6000 runes; `stemmed` is a
+   Snowball-russian copy for the second FTS table.
+4. **Embed (optional).** Chunks are sent to the Ollama `/api/embed` endpoint in
+   batches of 64 with retries and an on-disk cache. If the embedder is
+   unreachable, FTS rows are still written and vectors stay pending.
+5. **Store (SQLite).** One transaction per session: delete the old rows and
+   their vectors, insert the new chunks (triggers fill `fts_unicode` and
+   `fts_stem`), insert vectors, upsert `sessions` and `sync_state`.
+6. **Bleve (concurrent).** The same `[]chunk.Chunk` is sent over a small
+   buffered channel to a Bleve goroutine that deletes the session's old
+   documents and adds the new ones. A Bleve error is counted and reported but
+   never stops the SQLite path.
+7. **Backfill.** On every run, chunks with `embedded = 0` and a non-empty
+   `embed_text` get vectors filled in once the embedder is reachable. Nothing
+   is re-chunked; only vectors are computed.
+
+At query time the MCP server never writes: it reads originals from `opencode.db`
+and candidates from `memory.db` plus Bleve, and merges them (see below).
+
 ## Requirements
 
-- Go 1.26+
+- To use the npm wrapper: Node 18+ (for `npx`). No Go needed.
+- To build from source: Go 1.26+.
 - Optional: an embedding server exposing the Ollama `/api/embed` endpoint
   (for example Ollama with `bge-m3`). Without it the index is FTS-only and
   vectors stay pending until the server is available.
@@ -75,40 +152,66 @@ No CGO and no external database are required. `CGO_ENABLED=0` works.
 
 ## Quick start
 
-### 1. Build
+### 1. Install with one command
 
 ```bash
-go build -o bin/indexer ./cmd/indexer
-go build -o bin/mcp ./cmd/mcp
+npx -y @devanboo/mcp-memory install
 ```
 
-### 2. Index the history
+This downloads the prebuilt CGO-free binary for your platform, caches it under
+`~/.cache/mcp-memory/`, and adds the `memory` MCP server to your
+global `opencode.json(c)`. It never overwrites an existing `memory` entry
+unless you pass `--force`. Restart OpenCode afterwards.
+
+Then build the index once (see step 3):
+
+```bash
+npx -y @devanboo/mcp-memory index
+```
+
+`npx` resolves the latest published version, so upgrades are automatic. If you
+do not want Node, download the archive for your platform from the GitHub
+Releases page (it contains a single binary, `mcp-memory`), or build
+from source in step 2.
+
+### 2. Build from source (alternative)
+
+```bash
+go build -o bin/mcp-memory ./cmd/mcp-memory
+```
+
+One binary contains everything: the MCP server and the indexer are subcommands.
+
+### 3. Index the history
+
+The examples use the npm wrapper; for a local build replace
+`npx -y @devanboo/mcp-memory` with `bin/mcp-memory`.
 
 ```bash
 # Zero-config local mode. MEMORY_SQLITE defaults to the standard OpenCode path.
-bin/indexer --index
+npx -y @devanboo/mcp-memory index
 
 # Index only a few sessions (useful for a first try).
-bin/indexer --index --limit 3
+npx -y @devanboo/mcp-memory index --limit 3
 
 # Index one project only.
-bin/indexer --index --project /var/www/my-repo
+npx -y @devanboo/mcp-memory index --project /var/www/my-repo
 ```
 
-Re-running `--index` is incremental: a session is re-indexed only when its
+Re-running `index` is incremental: a session is re-indexed only when its
 `time_updated` is newer than the last sync, or its previous attempt failed.
 
-Useful flags:
+Useful commands and flags:
 
 ```bash
-bin/indexer --all                 # summary of the whole database (diagnostics)
-bin/indexer --session ses_xxx     # dump one session dialog (diagnostics)
-bin/indexer --limit 10            # cap the number of sessions in this run
-bin/indexer --no-bleve            # skip the Bleve index
-bin/indexer --embed-pause 150ms   # throttle between embedding batches
+npx -y @devanboo/mcp-memory sessions        # whole database summary (diagnostics)
+npx -y @devanboo/mcp-memory session ses_xxx # dump one session dialog (diagnostics)
+npx -y @devanboo/mcp-memory index --limit 10          # cap the number of sessions
+npx -y @devanboo/mcp-memory index --no-bleve          # skip the Bleve index
+npx -y @devanboo/mcp-memory index --embed-pause 150ms # throttle embedding batches
 ```
 
-### 3. Start the embedding server (optional)
+### 4. Start the embedding server (optional)
 
 ```bash
 ollama serve
@@ -119,30 +222,51 @@ When Ollama is not running, the indexer logs a warning, writes the FTS rows
 and leaves vectors pending. A later run with the embedder available backfills
 them.
 
-### 4. Run the MCP server
+### 5. Run the MCP server
 
-The server speaks MCP over stdio. Example `opencode.json` entry:
+The server speaks MCP over stdio. `install` writes this entry for you; it is
+shown here for reference, both for the npm wrapper and for a locally built
+binary:
 
 ```json
 {
   "mcp": {
     "memory": {
       "type": "local",
-      "command": ["/var/www/opencode-rag/bin/mcp"],
+      "command": ["npx", "-y", "@devanboo/mcp-memory"],
       "enabled": true,
-      "environment": {
-        "MEMORY_SQLITE": "/home/you/.local/share/opencode/opencode.db",
-        "MEMORY_DB": "/home/you/.local/share/opencode/memory.db",
-        "MEMORY_BLEVE": "/home/you/.local/share/opencode/memory.bleve",
-        "MEMORY_EMBED_URL": "http://localhost:11434",
-        "MEMORY_EMBED_DIM": "1024"
-      }
+      "timeout": 20000
     }
   }
 }
 ```
 
-All of those variables have defaults, so an empty environment works too.
+```json
+{
+  "mcp": {
+    "memory": {
+      "type": "local",
+      "command": ["/var/www/mcp-memory/bin/mcp-memory", "serve"],
+      "enabled": true
+    }
+  }
+}
+```
+
+The npm command launches `serve` for you; the local binary uses the explicit
+`serve` subcommand. All path and embedder settings come from the environment
+below and have defaults, so the entry can be minimal. If you need non-default
+paths, add an `environment` block:
+
+```json
+"environment": {
+  "MEMORY_SQLITE": "/home/you/.local/share/opencode/opencode.db",
+  "MEMORY_DB": "/home/you/.local/share/opencode/memory.db",
+  "MEMORY_BLEVE": "/home/you/.local/share/opencode/memory.bleve",
+  "MEMORY_EMBED_URL": "http://localhost:11434",
+  "MEMORY_EMBED_DIM": "1024"
+}
+```
 
 ## Configuration
 
@@ -291,9 +415,9 @@ indexer creates and updates it; the MCP server only opens it.
 
 ```
 cmd/
-  indexer/main.go        # full / incremental indexing and diagnostics
-  mcp/main.go            # MCP server (stdio)
+  mcp-memory/   # the single binary; dispatches to subcommands
 internal/
+  cli/                   # subcommands: serve (MCP) and index/sessions/session
   config/                # env configuration
   extract/               # read opencode.db: sessions, messages, parts, coordinates
   chunk/                 # part -> chunk policy
@@ -305,6 +429,9 @@ internal/
   bleveidx/              # Bleve secondary lexical index
   indexer/               # indexing pipeline and progress reporting
   mcp/                   # MCP tools: search/read/session/context/status
+  version/               # build version, set at link time
+npm/                     # npm wrapper: downloads the release binary, writes config
+.github/workflows/       # release workflow: binaries + checksums + npm publish
 migrations/              # numbered SQL migrations (embedded)
 storage/                 # embedding cache (not in git)
 research/                # research spike (gitignored, separate Go module)
@@ -322,7 +449,10 @@ Tests do not require a database, network or Ollama. They use temporary
 SQLite files, a fake embedder and a temporary Bleve index. CGO is not needed:
 
 ```bash
-CGO_ENABLED=0 go build ./cmd/indexer ./cmd/mcp
+CGO_ENABLED=0 go build ./cmd/mcp-memory
+
+# npm wrapper tests (config merge, asset naming)
+cd npm && npm install && npm test
 ```
 
 ## Design notes

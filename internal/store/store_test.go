@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"opencode-rag/internal/chunk"
-	"opencode-rag/internal/extract"
+	"github.com/anboo/mcp-memory/internal/chunk"
+	"github.com/anboo/mcp-memory/internal/extract"
 )
 
 type fakeEmbedder struct {

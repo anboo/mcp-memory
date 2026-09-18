@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"opencode-rag/migrations"
+	"github.com/anboo/mcp-memory/migrations"
 
 	_ "modernc.org/sqlite"
 	_ "modernc.org/sqlite/vec"
