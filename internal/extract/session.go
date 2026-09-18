@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// Session - строка таблицы session (см. arch-док A3.2).
+// Session is a row of the session table.
 type Session struct {
 	ID           string
 	ProjectID    string
@@ -16,15 +16,15 @@ type Session struct {
 	Title        string
 	Version      string
 	Agent        string
-	Model        string // JSON из колонки model
+	Model        string // JSON from the model column
 	TimeCreated  int64  // epoch ms
 	TimeUpdated  int64  // epoch ms
-	TimeArchived *int64 // NULL у всех текущих сессий
-	Compacted    bool   // вычисляется по наличию part type=compaction
-	TailStartID  string // из compaction-части, пусто если нет
+	TimeArchived *int64 // NULL for all current sessions
+	Compacted    bool   // computed from the presence of a compaction part
+	TailStartID  string // from the compaction part, empty when absent
 }
 
-// ModelInfo - разобранная колонка session.model.
+// ModelInfo is the parsed session.model column.
 type ModelInfo struct {
 	ID         string `json:"id"`
 	ProviderID string `json:"providerID"`
@@ -49,7 +49,7 @@ func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	return s, nil
 }
 
-// ListSessions возвращает все сессии, отсортированные по time_updated (свежие первыми).
+// ListSessions returns all sessions sorted by time_updated (newest first).
 func ListSessions(ctx context.Context, db *sql.DB) ([]Session, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT `+sessionCols+` FROM session ORDER BY time_updated DESC`)
@@ -69,13 +69,13 @@ func ListSessions(ctx context.Context, db *sql.DB) ([]Session, error) {
 	return out, rows.Err()
 }
 
-// GetSession возвращает одну сессию по id.
+// GetSession returns one session by id.
 func GetSession(ctx context.Context, db *sql.DB, id string) (*Session, error) {
 	row := db.QueryRowContext(ctx,
 		`SELECT `+sessionCols+` FROM session WHERE id = ?`, id)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("extract: session %s не найдена", id)
+		return nil, fmt.Errorf("extract: session %s not found", id)
 	}
 	if err != nil {
 		return nil, err
@@ -83,7 +83,8 @@ func GetSession(ctx context.Context, db *sql.DB, id string) (*Session, error) {
 	return &s, nil
 }
 
-// Model разбирает JSON колонки model. Пустая строка -> пустая структура.
+// ModelInfo parses the model JSON column. An empty value yields an empty
+// struct.
 func (s *Session) ModelInfo() ModelInfo {
 	var m ModelInfo
 	if s.Model != "" {

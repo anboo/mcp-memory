@@ -10,7 +10,7 @@ import (
 
 func TestEmbedBatch(t *testing.T) {
 	if os.Getenv("OLLAMA_TEST") == "" {
-		t.Skip("OLLAMA_TEST не задан: интеграционный тест с реальным Ollama")
+		t.Skip("OLLAMA_TEST is not set: integration test against a real Ollama")
 	}
 	c := New("http://localhost:11434", "bge-m3", t.TempDir(), 1024)
 	vecs, err := c.Embed(context.Background(), []string{"привет мир", "hello world"}, 8)
@@ -25,7 +25,7 @@ func TestEmbedBatch(t *testing.T) {
 			t.Fatalf("dims = %d, want 1024", len(v))
 		}
 		if math.Abs(float64(v[0])) > 100 {
-			t.Fatalf("подозрительный вектор: %v", v[:3])
+			t.Fatalf("suspicious vector: %v", v[:3])
 		}
 	}
 }
@@ -38,7 +38,7 @@ func TestCacheRoundtrip(t *testing.T) {
 	c.cacheSet("текст для кэша", vec)
 	got, ok := c.cacheGet("текст для кэша")
 	if !ok {
-		t.Fatal("кэш не найден")
+		t.Fatal("cache miss for an entry that was just written")
 	}
 	if len(got) != len(vec) {
 		t.Fatalf("len = %d", len(got))
@@ -49,9 +49,9 @@ func TestCacheRoundtrip(t *testing.T) {
 		}
 	}
 
-	// другой текст не должен попасть в кэш
+	// A different text must not hit the cache.
 	if _, ok := c.cacheGet("другой текст"); ok {
-		t.Fatal("неверный хит кэша")
+		t.Fatal("unexpected cache hit")
 	}
 }
 
@@ -60,19 +60,19 @@ func TestCacheDimMismatch(t *testing.T) {
 	c := New("", "m", dir, 4)
 	c.cacheSet("x", []float32{1, 2, 3, 4})
 
-	// файл с размерностью 4, но клиент ожидает 8 -> мимо
+	// The file has dimension 4 but the client expects 8: must miss.
 	c2 := New("", "m", dir, 8)
 	if _, ok := c2.cacheGet("x"); ok {
-		t.Fatal("кэш с другой размерностью не должен срабатывать")
+		t.Fatal("cache with a different dimension must not hit")
 	}
 }
 
 func TestCacheDisabled(t *testing.T) {
 	c := New("", "m", "", 4)
 	if _, ok := c.cacheGet("x"); ok {
-		t.Fatal("без cacheDir кэш не работает")
+		t.Fatal("cache must be disabled without cacheDir")
 	}
-	c.cacheSet("x", []float32{1}) // не должно паниковать
+	c.cacheSet("x", []float32{1}) // must not panic
 }
 
 func TestCachePathStable(t *testing.T) {
@@ -81,9 +81,9 @@ func TestCachePathStable(t *testing.T) {
 	p1 := c.cachePath("один и тот же текст")
 	p2 := c.cachePath("один и тот же текст")
 	if p1 != p2 || p1 == "" {
-		t.Fatalf("cachePath нестабилен: %q vs %q", p1, p2)
+		t.Fatalf("cachePath is not stable: %q vs %q", p1, p2)
 	}
 	if filepath.Dir(p1) != dir {
-		t.Fatalf("cachePath вне cacheDir: %q", p1)
+		t.Fatalf("cachePath outside cacheDir: %q", p1)
 	}
 }

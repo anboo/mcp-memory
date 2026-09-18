@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// Project - строка таблицы project (см. arch-док A3.7).
+// Project is a row of the project table.
 type Project struct {
 	ID       string
 	Worktree string
@@ -14,7 +14,7 @@ type Project struct {
 	Name     sql.NullString
 }
 
-// ListProjects возвращает все проекты: id -> worktree.
+// ListProjects returns all projects.
 func ListProjects(ctx context.Context, db *sql.DB) ([]Project, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, worktree, vcs, name FROM project`)
@@ -34,7 +34,7 @@ func ListProjects(ctx context.Context, db *sql.DB) ([]Project, error) {
 	return out, rows.Err()
 }
 
-// ProjectMap строит map id -> worktree для быстрой привязки сессий.
+// ProjectMap builds an id -> worktree map for fast session binding.
 func ProjectMap(ctx context.Context, db *sql.DB) (map[string]string, error) {
 	projects, err := ListProjects(ctx, db)
 	if err != nil {

@@ -1,28 +1,32 @@
-// mcp - MCP-сервер памяти агента.
+// Command mcp runs the memory MCP server over stdio.
 //
-// Запускается opencode через stdio. Читает opencode.db (read-only) для
-// оригиналов и PostgreSQL для гибридного поиска.
+// It reads originals from the OpenCode source database (read-only) and search
+// candidates from the local SQLite index, with an optional Bleve secondary
+// index. Both optional sources degrade gracefully.
 //
-// Конфигурация (env):
+// Configuration (environment):
 //
-//	MEMORY_SQLITE    путь к opencode.db (default ~/.local/share/opencode/opencode.db)
-//	MEMORY_PG        DSN PostgreSQL
-//	MEMORY_EMBED_URL URL Ollama (default http://localhost:11434)
-//	MEMORY_EMBED_DIM размерность модели (default 1024)
+//	MEMORY_SQLITE     path to opencode.db (default ~/.local/share/opencode/opencode.db)
+//	MEMORY_DB         path to memory.db  (default ~/.local/share/opencode/memory.db)
+//	MEMORY_BLEVE      path to the Bleve index directory
+//	MEMORY_EMBED_URL  embedding server base URL (default http://localhost:11434)
+//	MEMORY_EMBED_DIM  embedding dimension (default 1024)
+//	MEMORY_EMBED_MODEL embedding model (default bge-m3)
 package main
 
 import (
 	"context"
 	"log"
 	"os"
+	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
+	"opencode-rag/internal/bleveidx"
 	"opencode-rag/internal/config"
 	"opencode-rag/internal/embed"
 	"opencode-rag/internal/extract"
 	"opencode-rag/internal/mcp"
 	"opencode-rag/internal/search"
+	"opencode-rag/internal/store"
 )
 
 func main() {
@@ -30,34 +34,51 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if cfg.PGDsn == "" {
-		log.Fatal("mcp: MEMORY_PG не задан")
-	}
 
 	ctx := context.Background()
 
-	// SQLite read-only: оригиналы для memory_read/session/context
+	// Originals: always read-only.
 	sqlite, err := extract.Open(cfg.SQLitePath)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer sqlite.Close()
 
-	// PostgreSQL: гибридный поиск
-	pool, err := pgxpool.New(ctx, cfg.PGDsn)
+	// Search index: opening creates an empty index when memory.db is absent,
+	// so the server always starts.
+	st, err := store.Open(ctx, cfg.DBPath, cfg.EmbedDim, cfg.EmbedModel)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer pool.Close()
+	defer st.Close()
 
-	// embedding-клиент для вектора запроса
-	emb := embed.New(cfg.EmbedURL, "bge-m3", "", cfg.EmbedDim)
+	// Optional embedder. A failed probe disables vector search for this run.
+	var vec search.VectorProvider
+	client := embed.New(cfg.EmbedURL, cfg.EmbedModel, "", cfg.EmbedDim)
+	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	if err := client.Ping(probeCtx); err == nil {
+		vec = &queryEmbedder{client: client}
+	}
+	cancel()
 
-	searcher := search.New(pool, &queryEmbedder{emb: emb})
+	// Optional Bleve index. It must already exist; the MCP server never
+	// builds it.
+	var lex search.LexicalSource
+	var bleveDocs mcp.DocCounter
+	if b, err := bleveidx.Open(cfg.BlevePath); err == nil {
+		lex = b
+		bleveDocs = b
+		defer b.Close()
+	}
+
+	searcher := search.New(st, vec, lex)
 
 	srv, err := mcp.New(mcp.Dependencies{
-		Searcher: searcher,
-		SQLite:   sqlite,
+		Searcher:    searcher,
+		SQLite:      sqlite,
+		Status:      st,
+		Bleve:       bleveDocs,
+		VectorQuery: vec != nil,
 	}, mcp.DefaultLimiter())
 	if err != nil {
 		log.Fatal(err)
@@ -69,13 +90,13 @@ func main() {
 	os.Exit(0)
 }
 
-// queryEmbedder адаптирует embed.Client под search.VectorProvider.
+// queryEmbedder adapts embed.Client to search.VectorProvider.
 type queryEmbedder struct {
-	emb *embed.Client
+	client *embed.Client
 }
 
 func (q *queryEmbedder) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
-	vecs, err := q.emb.Embed(ctx, []string{text}, 1)
+	vecs, err := q.client.Embed(ctx, []string{text}, 1)
 	if err != nil {
 		return nil, err
 	}

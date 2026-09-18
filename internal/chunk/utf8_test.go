@@ -8,8 +8,8 @@ import (
 	"opencode-rag/internal/extract"
 )
 
-// Бинарный вывод инструмента с битой UTF-8 последовательностью.
-// 0xd0 - половинка кириллического символа (реальный случай из базы).
+// Binary tool output with a broken UTF-8 sequence.
+// 0xd0 is half of a Cyrillic character (a real case from the database).
 func TestToolOutputInvalidUTF8(t *testing.T) {
 	binOutput := "prefix\xd0\xd0\xd0binary"
 	raw := `{"type":"tool","tool":"bash","callID":"c1","state":{"status":"completed",
@@ -28,14 +28,14 @@ func TestToolOutputInvalidUTF8(t *testing.T) {
 	c := chunks[0]
 	for _, s := range []string{c.Content, c.Snippet, c.Command} {
 		if !utf8.ValidString(s) {
-			t.Fatalf("невалидный UTF-8: %q", s)
+			t.Fatalf("invalid UTF-8: %q", s)
 		}
 	}
 }
 
 func TestToolOutputTruncateOnRuneBoundary(t *testing.T) {
-	// длинный кириллический вывод: обрезка по байтам разорвала бы символ
-	long := strings.Repeat("абвгд", 2000) // 10000 рун
+	// Long Cyrillic output: byte-based truncation would split a character.
+	long := strings.Repeat("абвгд", 2000)
 	raw := `{"type":"tool","tool":"bash","callID":"c1","state":{"status":"completed",
 		"input":{"command":"cmd"},"output":"` + long + `"}}`
 	p := extract.PartWithPos{
@@ -51,12 +51,12 @@ func TestToolOutputTruncateOnRuneBoundary(t *testing.T) {
 	}
 	c := chunks[0]
 	if !c.Truncated {
-		t.Fatal("должен быть truncated")
+		t.Fatal("must be marked truncated")
 	}
 	if !utf8.ValidString(c.Content) {
-		t.Fatal("контент с битым UTF-8 после обрезки")
+		t.Fatal("content is not valid UTF-8 after truncation")
 	}
 	if n := len([]rune(c.Content)); n > MaxToolOutputLen+100 {
-		t.Fatalf("слишком длинный: %d рун", n)
+		t.Fatalf("content too long: %d runes", n)
 	}
 }

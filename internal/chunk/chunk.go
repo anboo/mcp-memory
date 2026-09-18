@@ -1,11 +1,11 @@
-// Package chunk превращает части сессий в поисковые чанки по политике
-// arch-дока B6.1:
+// Package chunk turns session parts into searchable chunks according to the
+// indexing policy:
 //
-//	text      -> чанк (embedding + FTS)
-//	tool      -> чанк (embedding + FTS), output обрезан до 4 КБ
-//	patch     -> чанк (только FTS, embedding = nil)
-//	reasoning -> чанк (только FTS, embedding = nil)
-//	step-start/finish, compaction -> не чанкуются
+//	text      -> chunk (embedding + FTS)
+//	tool      -> chunk (embedding + FTS), output capped at 4 KiB
+//	patch     -> chunk (FTS only, embedding nil)
+//	reasoning -> chunk (FTS only, embedding nil)
+//	step-start/finish, compaction -> not chunked
 package chunk
 
 import (
@@ -16,17 +16,20 @@ import (
 	"opencode-rag/internal/extract"
 )
 
-// MaxToolOutputLen - лимит вывода tool в content (для эмбеддинга и FTS).
-// Полный вывод отдаёт memory_read напрямую из SQLite (step-3).
+// MaxToolOutputLen caps tool output inside content (used for embeddings and
+// FTS). The full output is served by memory_read directly from SQLite.
 const MaxToolOutputLen = 4096
 
-// MaxEmbedContentLen - лимит длины текста, уходящего в эмбеддинг.
-// Content хранится полным для FTS, но вектор считается по обрезанному
-// префиксу: bge-m3 держит ~8192 токенов, длинные ассистентские ответы
-// (до 176 КБ) превышают контекст и сильно замедляют GPU.
+// MaxEmbedContentLen caps the text sent to the embedder. Content is stored in
+// full for FTS, but the vector is computed from a truncated prefix: bge-m3
+// holds about 8192 tokens and long assistant answers (up to 176 KiB) exceed
+// the context and slow the GPU down badly.
 const MaxEmbedContentLen = 6000
 
-// Chunk - единица поискового индекса (arch-док B6.2).
+// SnippetLen is the snippet length returned in search results.
+const SnippetLen = 300
+
+// Chunk is one unit of the search index.
 type Chunk struct {
 	ID          string
 	SessionID   string
@@ -44,15 +47,13 @@ type Chunk struct {
 	TimeCreated int64
 	TimeUpdated int64
 	Truncated   bool
-	// Embedding заполняется отдельно (internal/embed); nil для reasoning/patch.
+	// Embedding is filled separately by internal/embed; nil for reasoning and
+	// patch chunks.
 	Embedding []float32
 }
 
-// SnippetLen - длина сниппета для выдачи (B6.3).
-const SnippetLen = 300
-
-// Chunkify превращает части сессии в чанки.
-// projectID/projectPath - привязка сессии к проекту (arch-док A3.7).
+// Chunkify turns session parts into chunks.
+// projectID/projectPath bind the session to a project.
 func Chunkify(sessionID, projectID, projectPath string, parts []extract.PartWithPos, messages map[string]extract.Message) []Chunk {
 	out := make([]Chunk, 0, len(parts))
 	for i := range parts {
@@ -130,7 +131,7 @@ func chunkPart(p *extract.PartWithPos, sessionID, projectID, projectPath string)
 		if content == "" {
 			return Chunk{}, false
 		}
-		// только FTS, без embedding (B6.1)
+		// FTS only, no embedding.
 		return Chunk{
 			ID: p.ID, SessionID: sessionID, ProjectID: projectID, ProjectPath: projectPath,
 			MessageID: p.MessageID, PartType: p.Type,
@@ -158,7 +159,7 @@ func chunkPart(p *extract.PartWithPos, sessionID, projectID, projectPath string)
 	return Chunk{}, false
 }
 
-// snippet обрезает строку до n символов (по runes - кириллица).
+// snippet truncates a string to n runes (cyrillic-safe).
 func snippet(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -170,7 +171,7 @@ func snippet(s string, n int) string {
 	return string(runes[:n]) + "..."
 }
 
-// truncateRunes обрезает строку до n рун (не разрывая UTF-8).
+// truncateRunes truncates a string to n runes without breaking UTF-8.
 func truncateRunes(s string, n int) string {
 	runes := []rune(s)
 	if len(runes) <= n {
@@ -179,12 +180,11 @@ func truncateRunes(s string, n int) string {
 	return string(runes[:n])
 }
 
-// sanitizeUTF8 чистит текст для PostgreSQL:
-//   - битые UTF-8 последовательности -> U+FFFD (binary output инструментов)
-//   - NUL и управляющие байты (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F) -> удаляются
+// sanitizeUTF8 cleans text before it is stored:
+//   - broken UTF-8 sequences become U+FFFD (binary tool output);
+//   - NUL and control bytes (0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F) are removed.
 //
-// Без этого PG отклонит вставку: "invalid byte sequence for encoding UTF8"
-// (битые байты) или "invalid byte sequence ... 0x00" (NUL).
+// Tab, newline and carriage return are preserved.
 func sanitizeUTF8(s string) string {
 	if !utf8.ValidString(s) {
 		s = strings.ToValidUTF8(s, "\uFFFD")
@@ -200,19 +200,19 @@ func sanitizeUTF8(s string) string {
 	return s
 }
 
-// isControl - управляющие символы, которые PG не принимает в text.
-// Оставляем \t (0x09), \n (0x0A), \r (0x0D).
+// isControl reports control characters that should not be stored.
+// Tab (0x09), newline (0x0A) and carriage return (0x0D) are kept.
 func isControl(r rune) bool {
 	return r == 0 || (r < 0x09) || (r > 0x0A && r < 0x0D) || (r > 0x0D && r < 0x20)
 }
 
-// NeedsEmbedding - какие чанки получают вектор (B6.1: text и tool).
+// NeedsEmbedding reports which chunk types get a vector (text and tool).
 func NeedsEmbedding(c *Chunk) bool {
 	return c.PartType == extract.PartTypeText || c.PartType == extract.PartTypeTool
 }
 
-// EmbedContent возвращает текст для эмбеддинга: обрезанный до
-// MaxEmbedContentLen префикс. FTS использует полный Content.
+// EmbedContent returns the text for the embedder: a prefix capped at
+// MaxEmbedContentLen. FTS uses the full Content.
 func EmbedContent(c *Chunk) string {
 	runes := []rune(c.Content)
 	if len(runes) <= MaxEmbedContentLen {
@@ -221,16 +221,16 @@ func EmbedContent(c *Chunk) string {
 	return string(runes[:MaxEmbedContentLen])
 }
 
-// Validate проверяет чанк на минимальную целостность (для тестов и отладки).
+// Validate checks a chunk for minimal integrity (tests and debugging).
 func (c *Chunk) Validate() error {
 	if c.ID == "" || c.SessionID == "" || c.PartType == "" {
-		return fmt.Errorf("chunk: пустые обязательные поля: %+v", c)
+		return fmt.Errorf("chunk: missing required fields: %+v", c)
 	}
 	if c.Content == "" {
-		return fmt.Errorf("chunk %s: пустой content", c.ID)
+		return fmt.Errorf("chunk %s: empty content", c.ID)
 	}
 	if c.Position < 0 {
-		return fmt.Errorf("chunk %s: отрицательная позиция", c.ID)
+		return fmt.Errorf("chunk %s: negative position", c.ID)
 	}
 	return nil
 }

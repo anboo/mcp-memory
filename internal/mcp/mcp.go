@@ -1,14 +1,15 @@
-// Package mcp - MCP-сервер памяти агента (arch-док B4).
+// Package mcp implements the agent memory MCP tools.
 //
-// Четыре инструмента, все без LLM внутри:
+// There are five tools, all without any LLM call inside:
 //
-//	memory_search   - гибридный поиск: сниппеты + координаты
-//	memory_read     - окно истории вокруг координаты (ПОЛНЫЕ text/output)
-//	memory_session  - метаданные сессии + карта сообщений
-//	memory_context  - окно вокруг конкретной части (по part_id)
+//	memory_search   - hybrid search: snippets plus coordinates
+//	memory_read     - window of history around a coordinate (full text/output)
+//	memory_session  - session metadata plus a map of messages
+//	memory_context  - window around a specific part (by part id)
+//	memory_status   - index health: counts, sources, degradation state
 //
-// Аналитиком является текущая модель агента: она решает, что искать
-// и что читать.
+// The current agent model is the researcher: it decides what to look up,
+// reads the originals and does the reasoning.
 package mcp
 
 import (
@@ -19,25 +20,40 @@ import (
 
 	"opencode-rag/internal/extract"
 	"opencode-rag/internal/search"
+	"opencode-rag/internal/store"
 )
 
-// Dependencies - внешние зависимости сервера.
-type Dependencies struct {
-	Searcher *search.Searcher // гибридный поиск по PG (не nil)
-	SQLite   *sql.DB          // read-only opencode.db для чтения оригиналов
+// StatusProvider reports index health.
+type StatusProvider interface {
+	Status(ctx context.Context) (store.Status, error)
 }
 
-// Limiter - ограничения вывода (защита от раздувания контекста).
+// DocCounter reports the number of documents in the optional Bleve index.
+type DocCounter interface {
+	DocCount() (uint64, error)
+}
+
+// Dependencies are the external dependencies of the server.
+type Dependencies struct {
+	Searcher *search.Searcher
+	SQLite   *sql.DB
+	Status   StatusProvider
+	Bleve    DocCounter
+	// VectorQuery is true when a query embedder is available at runtime.
+	VectorQuery bool
+}
+
+// Limiter caps output sizes to protect the model context window.
 type Limiter struct {
-	// MaxWindow - максимум частей в окне memory_read/memory_context.
+	// MaxWindow is the maximum number of parts in a memory_read window.
 	MaxWindow int
-	// MaxToolOutput - максимум байт вывода tool на одну часть.
+	// MaxToolOutput is the maximum tool output per part, in runes.
 	MaxToolOutput int
-	// MaxSearchResults - максимум результатов memory_search.
+	// MaxSearchResults is the maximum number of memory_search results.
 	MaxSearchResults int
 }
 
-// DefaultLimiter - разумные дефолты (arch-док B4.3, step-3).
+// DefaultLimiter returns reasonable defaults.
 func DefaultLimiter() Limiter {
 	return Limiter{
 		MaxWindow:        50,
@@ -50,7 +66,7 @@ func DefaultLimiter() Limiter {
 // memory_search
 // ---------------------------------------------------------------------------
 
-// SearchParams - аргументы memory_search.
+// SearchParams are the arguments of memory_search.
 type SearchParams struct {
 	Query    string `json:"query"`
 	Project  string `json:"project,omitempty"`
@@ -59,10 +75,10 @@ type SearchParams struct {
 	Limit    int    `json:"limit,omitempty"`
 }
 
-// Search выполняет memory_search: сниппеты + координаты.
-func Search(ctx context.Context, deps Dependencies, lim Limiter, p SearchParams) ([]search.Hit, error) {
+// Search runs memory_search.
+func Search(ctx context.Context, deps Dependencies, lim Limiter, p SearchParams) (search.Result, error) {
 	if p.Query == "" {
-		return nil, fmt.Errorf("memory_search: пустой query")
+		return search.Result{}, fmt.Errorf("memory_search: query is required")
 	}
 	if p.Limit <= 0 || p.Limit > lim.MaxSearchResults {
 		p.Limit = lim.MaxSearchResults
@@ -80,7 +96,7 @@ func Search(ctx context.Context, deps Dependencies, lim Limiter, p SearchParams)
 // memory_read / memory_context
 // ---------------------------------------------------------------------------
 
-// WindowPart - одна часть в окне истории.
+// WindowPart is one part in a history window.
 type WindowPart struct {
 	ID          string   `json:"id"`
 	Role        string   `json:"role,omitempty"`
@@ -94,7 +110,7 @@ type WindowPart struct {
 	TimeCreated int64    `json:"time_created"`
 }
 
-// ReadWindow - окно истории вокруг координаты.
+// ReadWindow is a window of history around a coordinate.
 type ReadWindow struct {
 	SessionID string       `json:"session_id"`
 	Position  int          `json:"position"`
@@ -102,7 +118,7 @@ type ReadWindow struct {
 	Compacted bool         `json:"compacted"`
 }
 
-// ReadParams - аргументы memory_read.
+// ReadParams are the arguments of memory_read.
 type ReadParams struct {
 	SessionID string `json:"session_id"`
 	Position  int    `json:"position"`
@@ -110,13 +126,16 @@ type ReadParams struct {
 	After     int    `json:"after,omitempty"`
 }
 
-// Read выполняет memory_read: окно частей вокруг position с полными текстами.
+// Read runs memory_read: a window of parts around position with full texts.
 func Read(ctx context.Context, deps Dependencies, lim Limiter, p ReadParams) (*ReadWindow, error) {
 	if p.SessionID == "" {
-		return nil, fmt.Errorf("memory_read: пустой session_id")
+		return nil, fmt.Errorf("memory_read: session_id is required")
+	}
+	if p.Position < 0 {
+		return nil, fmt.Errorf("memory_read: position must not be negative")
 	}
 	if p.Before < 0 || p.After < 0 {
-		return nil, fmt.Errorf("memory_read: before/after не могут быть отрицательными")
+		return nil, fmt.Errorf("memory_read: before and after must not be negative")
 	}
 	if p.Before == 0 {
 		p.Before = 5
@@ -125,7 +144,7 @@ func Read(ctx context.Context, deps Dependencies, lim Limiter, p ReadParams) (*R
 		p.After = 10
 	}
 	if p.Before+p.After > lim.MaxWindow {
-		return nil, fmt.Errorf("memory_read: before+after > %d (лимит окна)", lim.MaxWindow)
+		return nil, fmt.Errorf("memory_read: before+after must not exceed %d parts", lim.MaxWindow)
 	}
 
 	parts, err := extract.PartsWithPosition(ctx, deps.SQLite, p.SessionID)
@@ -133,7 +152,6 @@ func Read(ctx context.Context, deps Dependencies, lim Limiter, p ReadParams) (*R
 		return nil, err
 	}
 
-	// найти индекс части с нужной позицией
 	idx := -1
 	for i := range parts {
 		if parts[i].Position == p.Position {
@@ -142,7 +160,7 @@ func Read(ctx context.Context, deps Dependencies, lim Limiter, p ReadParams) (*R
 		}
 	}
 	if idx < 0 {
-		return nil, fmt.Errorf("memory_read: позиция %d не найдена в сессии %s (частей: %d)",
+		return nil, fmt.Errorf("memory_read: position %d not found in session %s (%d parts)",
 			p.Position, p.SessionID, len(parts))
 	}
 
@@ -155,7 +173,6 @@ func Read(ctx context.Context, deps Dependencies, lim Limiter, p ReadParams) (*R
 		to = len(parts)
 	}
 
-	// компакция сессии
 	s := &extract.Session{ID: p.SessionID}
 	allParts := make([]extract.Part, len(parts))
 	for i := range parts {
@@ -166,10 +183,10 @@ func Read(ctx context.Context, deps Dependencies, lim Limiter, p ReadParams) (*R
 	win := &ReadWindow{
 		SessionID: p.SessionID,
 		Position:  p.Position,
+		Parts:     []WindowPart{},
 		Compacted: s.Compacted,
 	}
 
-	// карта ролей сообщений
 	msgs, err := extract.ListMessages(ctx, deps.SQLite, p.SessionID)
 	if err != nil {
 		return nil, err
@@ -189,41 +206,41 @@ func Read(ctx context.Context, deps Dependencies, lim Limiter, p ReadParams) (*R
 	return win, nil
 }
 
-// ContextParams - аргументы memory_context.
+// ContextParams are the arguments of memory_context.
 type ContextParams struct {
 	PartID string `json:"part_id"`
 	Before int    `json:"before,omitempty"`
 	After  int    `json:"after,omitempty"`
 }
 
-// Context выполняет memory_context: окно вокруг конкретной части.
+// Context runs memory_context: a window around a specific part.
 func Context(ctx context.Context, deps Dependencies, lim Limiter, p ContextParams) (*ReadWindow, error) {
 	if p.PartID == "" {
-		return nil, fmt.Errorf("memory_context: пустой part_id")
+		return nil, fmt.Errorf("memory_context: part_id is required")
 	}
 
-	// найти часть и её сессию
-	var sessionID string
-	var position int
 	part, err := findPart(ctx, deps.SQLite, p.PartID)
 	if err != nil {
 		return nil, err
 	}
-	sessionID = part.SessionID
 
-	parts, err := extract.PartsWithPosition(ctx, deps.SQLite, sessionID)
+	parts, err := extract.PartsWithPosition(ctx, deps.SQLite, part.SessionID)
 	if err != nil {
 		return nil, err
 	}
+	position := -1
 	for i := range parts {
 		if parts[i].ID == p.PartID {
 			position = parts[i].Position
 			break
 		}
 	}
+	if position < 0 {
+		return nil, fmt.Errorf("memory_context: part %s not found in its session", p.PartID)
+	}
 
 	return Read(ctx, deps, lim, ReadParams{
-		SessionID: sessionID,
+		SessionID: part.SessionID,
 		Position:  position,
 		Before:    p.Before,
 		After:     p.After,
@@ -234,7 +251,7 @@ func Context(ctx context.Context, deps Dependencies, lim Limiter, p ContextParam
 // memory_session
 // ---------------------------------------------------------------------------
 
-// SessionInfo - результат memory_session.
+// SessionInfo is the result of memory_session.
 type SessionInfo struct {
 	SessionID   string       `json:"session_id"`
 	Title       string       `json:"title"`
@@ -249,17 +266,17 @@ type SessionInfo struct {
 	Messages    []SessionMsg `json:"messages"`
 }
 
-// SessionMsg - сообщение в карте сессии (без полных текстов).
+// SessionMsg is one message in the session map (without full texts).
 type SessionMsg struct {
 	Role      string   `json:"role"`
 	Time      int64    `json:"time_created"`
 	PartTypes []string `json:"part_types"`
 }
 
-// Session выполняет memory_session: метаданные + карта сообщений.
+// Session runs memory_session: metadata plus a map of messages.
 func Session(ctx context.Context, deps Dependencies, _ Limiter, sessionID string) (*SessionInfo, error) {
 	if sessionID == "" {
-		return nil, fmt.Errorf("memory_session: пустой session_id")
+		return nil, fmt.Errorf("memory_session: session_id is required")
 	}
 
 	s, err := extract.GetSession(ctx, deps.SQLite, sessionID)
@@ -282,7 +299,6 @@ func Session(ctx context.Context, deps Dependencies, _ Limiter, sessionID string
 	}
 	extract.MarkCompacted(s, allParts)
 
-	// группировка типов частей по сообщениям
 	typesByMsg := make(map[string][]string)
 	timeByMsg := make(map[string]int64)
 	for i := range parts {
@@ -309,22 +325,112 @@ func Session(ctx context.Context, deps Dependencies, _ Limiter, sessionID string
 		TimeUpdated: s.TimeUpdated,
 		Compacted:   s.Compacted,
 		TailStartID: s.TailStartID,
+		Messages:    []SessionMsg{},
 	}
 	for _, m := range msgs {
+		parts := typesByMsg[m.ID]
+		if parts == nil {
+			parts = []string{}
+		}
 		info.Messages = append(info.Messages, SessionMsg{
 			Role:      m.Role,
 			Time:      m.TimeCreated,
-			PartTypes: typesByMsg[m.ID],
+			PartTypes: parts,
 		})
 	}
 	return info, nil
 }
 
 // ---------------------------------------------------------------------------
+// memory_status
+// ---------------------------------------------------------------------------
+
+// SourceState describes which retrieval sources are currently available.
+type SourceState struct {
+	FTS      bool `json:"fts"`
+	FTSStem  bool `json:"fts_stem"`
+	Vector   bool `json:"vector"`
+	Bleve    bool `json:"bleve"`
+	Degraded bool `json:"degraded"`
+}
+
+// StatusInfo is the result of memory_status.
+type StatusInfo struct {
+	Index  StatusCounts `json:"index"`
+	Bleve  StatusBleve  `json:"bleve"`
+	Source SourceState  `json:"sources"`
+	Note   string       `json:"note,omitempty"`
+}
+
+// StatusCounts is the SQLite index health.
+type StatusCounts struct {
+	Sessions       int64  `json:"sessions"`
+	Chunks         int64  `json:"chunks"`
+	Vectors        int64  `json:"vectors"`
+	PendingVectors int64  `json:"pending_vectors"`
+	EmbedDim       int    `json:"embed_dim"`
+	EmbedModel     string `json:"embed_model,omitempty"`
+	LastSync       int64  `json:"last_sync"`
+	SchemaVersion  int    `json:"schema_version"`
+}
+
+// StatusBleve is the optional Bleve index health.
+type StatusBleve struct {
+	Available bool   `json:"available"`
+	Docs      uint64 `json:"docs"`
+	Error     string `json:"error,omitempty"`
+}
+
+// Status runs memory_status.
+func Status(ctx context.Context, deps Dependencies) (StatusInfo, error) {
+	var out StatusInfo
+	if deps.Status == nil {
+		return out, fmt.Errorf("memory_status: status provider is not configured")
+	}
+	st, err := deps.Status.Status(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Index = StatusCounts{
+		Sessions:       st.Sessions,
+		Chunks:         st.Chunks,
+		Vectors:        st.Vectors,
+		PendingVectors: st.PendingVectors,
+		EmbedDim:       st.EmbedDim,
+		EmbedModel:     st.EmbedModel,
+		LastSync:       st.LastSync,
+		SchemaVersion:  st.SchemaVersion,
+	}
+	if deps.Bleve != nil {
+		n, err := deps.Bleve.DocCount()
+		if err != nil {
+			out.Bleve = StatusBleve{Available: false, Error: err.Error()}
+		} else {
+			out.Bleve = StatusBleve{Available: true, Docs: n}
+		}
+	} else {
+		out.Bleve = StatusBleve{Available: false, Error: "no bleve index configured"}
+	}
+
+	out.Source.FTS = true
+	out.Source.FTSStem = true
+	out.Source.Vector = deps.VectorQuery && st.Vectors > 0
+	out.Source.Bleve = out.Bleve.Available && out.Bleve.Docs > 0
+
+	out.Note = "FTS (raw + stemmed) is always available; vector and bleve are optional"
+	if !deps.VectorQuery {
+		out.Note += "; query embedder unavailable, vector search is disabled"
+	}
+	if st.PendingVectors > 0 {
+		out.Note += fmt.Sprintf("; %d chunks have pending vectors (run the indexer once embeddings are reachable)", st.PendingVectors)
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
-// findPart ищет часть по id.
 func findPart(ctx context.Context, db *sql.DB, id string) (*extract.Part, error) {
 	var p extract.Part
 	var data string
@@ -333,7 +439,7 @@ func findPart(ctx context.Context, db *sql.DB, id string) (*extract.Part, error)
 		 FROM part WHERE id = ?`, id).
 		Scan(&p.ID, &p.MessageID, &p.SessionID, &p.TimeCreated, &p.TimeUpdated, &data)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("часть %s не найдена", id)
+		return nil, fmt.Errorf("part %s not found", id)
 	}
 	if err != nil {
 		return nil, err
@@ -343,7 +449,7 @@ func findPart(ctx context.Context, db *sql.DB, id string) (*extract.Part, error)
 	return &p, nil
 }
 
-// toWindowPart превращает часть в JSON-представление с полным содержимым.
+// toWindowPart converts a part into its JSON form with full content.
 func toWindowPart(p *extract.PartWithPos, roles map[string]string, maxToolOutput int) (WindowPart, error) {
 	wp := WindowPart{
 		ID:          p.ID,
@@ -372,13 +478,7 @@ func toWindowPart(p *extract.PartWithPos, roles map[string]string, maxToolOutput
 		}
 		wp.Tool = t.Tool
 		wp.Command = t.State.Input.Command
-		wp.Output = t.State.Output
-		if maxToolOutput > 0 && len(wp.Output) > maxToolOutput {
-			runes := []rune(wp.Output)
-			if len(runes) > maxToolOutput {
-				wp.Output = string(runes[:maxToolOutput]) + "...[truncated]"
-			}
-		}
+		wp.Output = truncateRunes(t.State.Output, maxToolOutput)
 	case extract.PartTypePatch:
 		t, err := p.ParsePatch()
 		if err != nil {
@@ -386,9 +486,21 @@ func toWindowPart(p *extract.PartWithPos, roles map[string]string, maxToolOutput
 		}
 		wp.Files = t.Files
 	case extract.PartTypeStepStart, extract.PartTypeStepFinish, extract.PartTypeCompaction:
-		// маркеры, текст не нужен
+		// Markers only; no text is returned.
 	default:
-		// прочие типы: без текста
+		// Unknown types are returned without text.
 	}
 	return wp, nil
+}
+
+// truncateRunes caps s at n runes, appending a marker when it was cut.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n]) + "...[truncated]"
 }

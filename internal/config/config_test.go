@@ -6,40 +6,74 @@ import (
 	"testing"
 )
 
-func TestDefaultSQLitePath(t *testing.T) {
+func TestDefaultDataDir(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Skip("no home dir")
 	}
-	want := filepath.Join(home, ".local/share/opencode/opencode.db")
-	if got := defaultSQLitePath(); got != want {
-		t.Fatalf("defaultSQLitePath() = %q, want %q", got, want)
+	want := filepath.Join(home, ".local/share/opencode")
+	if got := defaultDataDir(); got != want {
+		t.Fatalf("defaultDataDir() = %q, want %q", got, want)
 	}
 }
 
 func TestLoadDefaults(t *testing.T) {
-	t.Setenv("MEMORY_SQLITE", "/tmp/test.db")
+	t.Setenv("MEMORY_SQLITE", "/tmp/source.db")
+	t.Setenv("MEMORY_DB", "")
+	t.Setenv("MEMORY_BLEVE", "")
+	t.Setenv("MEMORY_EMBED_URL", "")
+	t.Setenv("MEMORY_EMBED_DIM", "")
+	t.Setenv("MEMORY_EMBED_MODEL", "")
+
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.SQLitePath != "/tmp/test.db" {
+	if c.SQLitePath != "/tmp/source.db" {
 		t.Fatalf("SQLitePath = %q", c.SQLitePath)
 	}
-	if c.PGDsn != "" || c.EmbedURL == "" || c.EmbedDim == 0 {
-		t.Fatalf("unexpected defaults: %+v", c)
+	if c.DBPath != filepath.Join(defaultDataDir(), "memory.db") {
+		t.Fatalf("DBPath = %q", c.DBPath)
+	}
+	if c.BlevePath != filepath.Join(defaultDataDir(), "memory.bleve") {
+		t.Fatalf("BlevePath = %q", c.BlevePath)
+	}
+	if c.EmbedURL != "http://localhost:11434" {
+		t.Fatalf("EmbedURL = %q", c.EmbedURL)
+	}
+	if c.EmbedDim != 1024 {
+		t.Fatalf("EmbedDim = %d", c.EmbedDim)
+	}
+	if c.EmbedModel != "bge-m3" {
+		t.Fatalf("EmbedModel = %q", c.EmbedModel)
 	}
 }
 
-func TestLoadUsesDefault(t *testing.T) {
-	t.Setenv("MEMORY_SQLITE", "")
+func TestLoadOverrides(t *testing.T) {
+	t.Setenv("MEMORY_SQLITE", "/tmp/s.db")
+	t.Setenv("MEMORY_DB", "/tmp/m.db")
+	t.Setenv("MEMORY_BLEVE", "/tmp/m.bleve")
+	t.Setenv("MEMORY_EMBED_URL", "http://example:1234")
+	t.Setenv("MEMORY_EMBED_DIM", "768")
+	t.Setenv("MEMORY_EMBED_MODEL", "nomic-embed-text")
+
 	c, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := defaultSQLitePath()
-	if c.SQLitePath != want {
-		t.Fatalf("SQLitePath = %q, want default %q", c.SQLitePath, want)
+	if c.DBPath != "/tmp/m.db" || c.BlevePath != "/tmp/m.bleve" {
+		t.Fatalf("paths not applied: %+v", c)
+	}
+	if c.EmbedURL != "http://example:1234" || c.EmbedDim != 768 || c.EmbedModel != "nomic-embed-text" {
+		t.Fatalf("embed settings not applied: %+v", c)
+	}
+}
+
+func TestLoadRejectsBadDim(t *testing.T) {
+	t.Setenv("MEMORY_SQLITE", "/tmp/s.db")
+	t.Setenv("MEMORY_EMBED_DIM", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected an error for a non-positive dimension")
 	}
 }
 

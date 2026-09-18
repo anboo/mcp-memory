@@ -20,6 +20,7 @@ func testPart(typ string, raw string) extract.PartWithPos {
 }
 
 func TestChunkifyText(t *testing.T) {
+	// Russian content is intentional: it exercises rune-based trimming.
 	part := testPart(extract.PartTypeText, `{"type":"text","text":"  привет, посмотри tree.sql  "}`)
 	chunks := Chunkify("ses_1", "p1", "/var/www/test", []extract.PartWithPos{part}, nil)
 	if len(chunks) != 1 {
@@ -30,7 +31,7 @@ func TestChunkifyText(t *testing.T) {
 		t.Fatalf("content = %q", c.Content)
 	}
 	if !NeedsEmbedding(&c) {
-		t.Fatal("text должен иметь embedding")
+		t.Fatal("text chunks must be embedded")
 	}
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
@@ -48,16 +49,16 @@ func TestChunkifyToolTruncation(t *testing.T) {
 	}
 	c := chunks[0]
 	if !c.Truncated {
-		t.Fatal("tool должен быть помечен truncated")
+		t.Fatal("tool output must be marked truncated")
 	}
 	if c.Command != "git diff" || c.Tool != "bash" {
 		t.Fatalf("tool/command: %q %q", c.Tool, c.Command)
 	}
 	if len(c.Content) > MaxToolOutputLen+100 {
-		t.Fatalf("content слишком большой: %d", len(c.Content))
+		t.Fatalf("content too large: %d", len(c.Content))
 	}
 	if !NeedsEmbedding(&c) {
-		t.Fatal("tool должен иметь embedding")
+		t.Fatal("tool chunks must be embedded")
 	}
 }
 
@@ -68,7 +69,7 @@ func TestChunkifyReasoningNoEmbedding(t *testing.T) {
 		t.Fatalf("chunks = %d", len(chunks))
 	}
 	if NeedsEmbedding(&chunks[0]) {
-		t.Fatal("reasoning не должен иметь embedding")
+		t.Fatal("reasoning chunks must not be embedded")
 	}
 }
 
@@ -84,7 +85,7 @@ func TestChunkifyPatch(t *testing.T) {
 		t.Fatalf("files: %v", c.Files)
 	}
 	if NeedsEmbedding(&c) {
-		t.Fatal("patch не должен иметь embedding")
+		t.Fatal("patch chunks must not be embedded")
 	}
 }
 
@@ -96,7 +97,7 @@ func TestChunkifySkipsService(t *testing.T) {
 	}
 	chunks := Chunkify("ses_1", "p1", "/var/www/test", parts, nil)
 	if len(chunks) != 0 {
-		t.Fatalf("служебные части не должны чанковаться: %d", len(chunks))
+		t.Fatalf("service parts must not be chunked: %d", len(chunks))
 	}
 }
 
@@ -104,16 +105,16 @@ func TestChunkifyEmptyText(t *testing.T) {
 	part := testPart(extract.PartTypeText, `{"type":"text","text":"   "}`)
 	chunks := Chunkify("ses_1", "p1", "/var/www/test", []extract.PartWithPos{part}, nil)
 	if len(chunks) != 0 {
-		t.Fatal("пустой текст не должен чанковаться")
+		t.Fatal("empty text must not be chunked")
 	}
 }
 
 func TestSnippet(t *testing.T) {
-	s := snippet("привет мир", 6)
-	if s != "привет..." {
+	// The first 6 runes of the Russian greeting are kept, then "...".
+	if s := snippet("привет мир", 6); s != "привет..." {
 		t.Fatalf("snippet = %q", s)
 	}
 	if got := snippet("короткий", 100); got != "короткий" {
-		t.Fatalf("короткий текст не должен обрезаться: %q", got)
+		t.Fatalf("short text must not be trimmed: %q", got)
 	}
 }

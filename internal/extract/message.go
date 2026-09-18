@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// Message - строка таблицы message (см. arch-док A3.3).
+// Message is a row of the message table.
 type Message struct {
 	ID          string
 	SessionID   string
@@ -18,7 +18,7 @@ type Message struct {
 	TimeUpdated int64
 }
 
-// MessageData - разобранный JSON колонки message.data.
+// MessageData is the parsed JSON of the message.data column.
 type MessageData struct {
 	Role  string `json:"role"`
 	Agent string `json:"agent"`
@@ -44,8 +44,8 @@ func scanMessage(row interface{ Scan(...any) error }) (Message, error) {
 	return m, nil
 }
 
-// ListMessages возвращает сообщения сессии в хронологическом порядке
-// (по time_created; id как стабилизатор при равных временах).
+// ListMessages returns a session's messages in chronological order
+// (by time_created; id breaks ties at equal times).
 func ListMessages(ctx context.Context, db *sql.DB, sessionID string) ([]Message, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT `+messageCols+` FROM message

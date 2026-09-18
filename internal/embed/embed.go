@@ -1,5 +1,6 @@
-// Package embed - HTTP-клиент локального embedding-сервера (Ollama).
-// Батчинг + ретраи + кэш по хешу текста (storage/embeddings/<sha256>.bin).
+// Package embed is an HTTP client for a local embedding server (Ollama).
+// It batches requests, retries on failure and caches vectors on disk by text
+// hash (storage/embeddings/<sha256>.bin).
 package embed
 
 import (
@@ -17,23 +18,23 @@ import (
 	"time"
 )
 
-// Client - клиент эмбеддингов.
+// Client is an embedding client.
 type Client struct {
 	baseURL   string
 	model     string
 	http      *http.Client
 	cacheDir  string
 	dim       int
-	keepAlive string // keep_alive для Ollama: модель выгружается через N после последнего запроса
+	keepAlive string
 }
 
-// New создаёт клиент. cacheDir может быть пустым (кэш отключён).
-// keepAlive: "0" - выгружать сразу, "30m" - держать 30 минут, "-1" - вечно.
+// New creates a client. cacheDir may be empty (cache disabled).
+// keepAlive: "0" unload immediately, "30m" keep 30 minutes, "-1" keep forever.
 func New(baseURL, model, cacheDir string, dim int) *Client {
 	return NewKeepAlive(baseURL, model, cacheDir, dim, "30m")
 }
 
-// NewKeepAlive создаёт клиент с явным keep_alive.
+// NewKeepAlive creates a client with an explicit keep_alive.
 func NewKeepAlive(baseURL, model, cacheDir string, dim int, keepAlive string) *Client {
 	if baseURL == "" {
 		baseURL = "http://localhost:11434"
@@ -51,8 +52,33 @@ func NewKeepAlive(baseURL, model, cacheDir string, dim int, keepAlive string) *C
 	}
 }
 
-// Dim возвращает размерность векторов.
+// Dim returns the vector dimension.
 func (c *Client) Dim() int { return c.dim }
+
+// Model returns the model name.
+func (c *Client) Model() string { return c.model }
+
+// Ping reports whether the embedding server is reachable. It uses a short
+// timeout so indexing can start in FTS-only mode quickly when the server is
+// down.
+func (c *Client) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/tags", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("embed: ping %s: %w", c.baseURL, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("embed: ping %s: HTTP %d", c.baseURL, resp.StatusCode)
+	}
+	return nil
+}
 
 type embedRequest struct {
 	Model     string   `json:"model"`
@@ -65,7 +91,7 @@ type embedResponse struct {
 	Error      string      `json:"error,omitempty"`
 }
 
-// Embed считает эмбеддинги батчами по batchSize.
+// Embed computes embeddings in batches of batchSize.
 func (c *Client) Embed(ctx context.Context, texts []string, batchSize int) ([][]float32, error) {
 	if batchSize <= 0 {
 		batchSize = 32
@@ -78,7 +104,7 @@ func (c *Client) Embed(ctx context.Context, texts []string, batchSize int) ([][]
 		}
 		vecs, err := c.embedBatch(ctx, texts[start:end])
 		if err != nil {
-			return nil, fmt.Errorf("embed: батч [%d:%d]: %w", start, end, err)
+			return nil, fmt.Errorf("embed: batch [%d:%d]: %w", start, end, err)
 		}
 		copy(out[start:end], vecs)
 	}
@@ -87,11 +113,9 @@ func (c *Client) Embed(ctx context.Context, texts []string, batchSize int) ([][]
 
 func (c *Client) embedBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	vecs := make([][]float32, len(texts))
-	// кэш: сначала проверить, что не посчитано
 	missIdx := make([]int, 0, len(texts))
 	for i, t := range texts {
-		v, ok := c.cacheGet(t)
-		if ok {
+		if v, ok := c.cacheGet(t); ok {
 			vecs[i] = v
 		} else {
 			missIdx = append(missIdx, i)
@@ -119,8 +143,7 @@ func (c *Client) embedBatch(ctx context.Context, texts []string) ([][]float32, e
 		return nil, fmt.Errorf("ollama: %s", resp.Error)
 	}
 	if len(resp.Embeddings) != len(missTexts) {
-		return nil, fmt.Errorf("ollama: вернул %d векторов на %d текстов",
-			len(resp.Embeddings), len(missTexts))
+		return nil, fmt.Errorf("ollama: returned %d vectors for %d texts", len(resp.Embeddings), len(missTexts))
 	}
 
 	for j, i := range missIdx {
@@ -149,8 +172,7 @@ func (c *Client) doWithRetry(ctx context.Context, body []byte, resp *embedRespon
 }
 
 func (c *Client) doOnce(ctx context.Context, body []byte, resp *embedResponse) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/api/embed", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/embed", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -172,7 +194,7 @@ func (c *Client) doOnce(ctx context.Context, body []byte, resp *embedResponse) e
 	return json.Unmarshal(data, resp)
 }
 
-// ---- кэш: storage/embeddings/<sha256>.bin ----
+// ---- cache: storage/embeddings/<sha256>.bin ----
 
 func (c *Client) cachePath(text string) string {
 	if c.cacheDir == "" {
@@ -209,14 +231,10 @@ func (c *Client) cacheSet(text string, vec []float32) {
 	}
 	data := make([]byte, len(vec)*4)
 	for i, v := range vec {
-		binary.LittleEndian.PutUint32(data[i*4:], float32ToBits(v))
+		binary.LittleEndian.PutUint32(data[i*4:], math.Float32bits(v))
 	}
 	_ = os.MkdirAll(filepath.Dir(p), 0o755)
 	_ = os.WriteFile(p, data, 0o644)
-}
-
-func float32ToBits(v float32) uint32 {
-	return math.Float32bits(v)
 }
 
 func truncateBytes(b []byte, n int) string {

@@ -7,7 +7,7 @@ import (
 	"fmt"
 )
 
-// PartType - тип части (поле "type" в data JSON).
+// PartType is the part type from the "type" field of the data JSON.
 const (
 	PartTypeText       = "text"
 	PartTypeTool       = "tool"
@@ -19,8 +19,8 @@ const (
 	PartTypeFile       = "file"
 )
 
-// Part - строка таблицы part (см. arch-док A3.4).
-// Raw хранит полный JSON data для разбора конкретного типа.
+// Part is a row of the part table. Raw holds the full data JSON for parsing
+// the concrete type.
 type Part struct {
 	ID          string
 	MessageID   string
@@ -31,15 +31,15 @@ type Part struct {
 	Raw         json.RawMessage
 }
 
-// PartWithPos - часть с координатой внутри сессии.
-// Порядок координат стабилен: message.time_created, затем part.rowid
-// (у частей одного сообщения time_created может совпадать).
+// PartWithPos is a part with its coordinate inside the session.
+// The coordinate order is stable: message.time_created, then part.rowid
+// (parts of one message can share time_created).
 type PartWithPos struct {
 	Part
 	Position int
 }
 
-// Разобранные JSON-структуры частей (arch-док A3.4).
+// Parsed JSON shapes of the part types.
 
 type TextPart struct {
 	Type string `json:"type"`
@@ -78,7 +78,7 @@ type CompactionPart struct {
 	TailStartID string `json:"tail_start_id"`
 }
 
-// ParseText разбирает Raw в TextPart.
+// ParseText parses Raw into TextPart.
 func (p *Part) ParseText() (TextPart, error) {
 	var t TextPart
 	if err := json.Unmarshal(p.Raw, &t); err != nil {
@@ -87,7 +87,7 @@ func (p *Part) ParseText() (TextPart, error) {
 	return t, nil
 }
 
-// ParseReasoning разбирает Raw в ReasoningPart.
+// ParseReasoning parses Raw into ReasoningPart.
 func (p *Part) ParseReasoning() (ReasoningPart, error) {
 	var t ReasoningPart
 	if err := json.Unmarshal(p.Raw, &t); err != nil {
@@ -96,7 +96,7 @@ func (p *Part) ParseReasoning() (ReasoningPart, error) {
 	return t, nil
 }
 
-// ParseTool разбирает Raw в ToolPart.
+// ParseTool parses Raw into ToolPart.
 func (p *Part) ParseTool() (ToolPart, error) {
 	var t ToolPart
 	if err := json.Unmarshal(p.Raw, &t); err != nil {
@@ -105,7 +105,7 @@ func (p *Part) ParseTool() (ToolPart, error) {
 	return t, nil
 }
 
-// ParsePatch разбирает Raw в PatchPart.
+// ParsePatch parses Raw into PatchPart.
 func (p *Part) ParsePatch() (PatchPart, error) {
 	var t PatchPart
 	if err := json.Unmarshal(p.Raw, &t); err != nil {
@@ -114,7 +114,7 @@ func (p *Part) ParsePatch() (PatchPart, error) {
 	return t, nil
 }
 
-// ParseCompaction разбирает Raw в CompactionPart.
+// ParseCompaction parses Raw into CompactionPart.
 func (p *Part) ParseCompaction() (CompactionPart, error) {
 	var t CompactionPart
 	if err := json.Unmarshal(p.Raw, &t); err != nil {
@@ -123,7 +123,7 @@ func (p *Part) ParseCompaction() (CompactionPart, error) {
 	return t, nil
 }
 
-// TypeOf читает только поле type из Raw без полного разбора.
+// TypeOf reads only the type field from Raw without a full parse.
 func (p *Part) TypeOf() string {
 	if p.Type != "" {
 		return p.Type
@@ -135,11 +135,11 @@ func (p *Part) TypeOf() string {
 	return h.Type
 }
 
-// PartsInOrder возвращает части сессии в координатном порядке
-// (message.time_created, затем part.rowid).
+// PartsInOrder returns a session's parts in coordinate order
+// (message.time_created, then part.rowid).
 //
-// rowid - порядок вставки внутри сообщения: при равных time_created
-// это единственный стабильный порядок.
+// rowid is the insertion order inside a message: when time_created values are
+// equal it is the only stable order.
 func PartsInOrder(ctx context.Context, db *sql.DB, sessionID string) ([]Part, error) {
 	rows, err := db.QueryContext(ctx,
 		`SELECT p.id, p.message_id, p.session_id, p.time_created, p.time_updated, p.data
@@ -167,9 +167,8 @@ func PartsInOrder(ctx context.Context, db *sql.DB, sessionID string) ([]Part, er
 	return out, rows.Err()
 }
 
-// PartsWithPosition возвращает части сессии с сквозными координатами.
-// Position - номер части в хронологическом порядке сессии (0-based).
-// Используется индексатором (step-2) и memory_read (step-3).
+// PartsWithPosition returns a session's parts with sequential coordinates.
+// Position is the 0-based index of the part in chronological order.
 func PartsWithPosition(ctx context.Context, db *sql.DB, sessionID string) ([]PartWithPos, error) {
 	parts, err := PartsInOrder(ctx, db, sessionID)
 	if err != nil {
@@ -182,8 +181,8 @@ func PartsWithPosition(ctx context.Context, db *sql.DB, sessionID string) ([]Par
 	return out, nil
 }
 
-// MarkCompacted помечает сессию скомпактированной и заполняет TailStartID,
-// если среди частей есть compaction (arch-док A7.3).
+// MarkCompacted marks a session as compacted and fills TailStartID when a
+// compaction part is present.
 func MarkCompacted(s *Session, parts []Part) {
 	for i := range parts {
 		if parts[i].Type != PartTypeCompaction {

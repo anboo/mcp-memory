@@ -1,45 +1,69 @@
-// Package config читает конфигурацию из переменных окружения.
+// Package config reads configuration from environment variables.
+//
+// All paths and settings have sensible defaults, so the local mode works with
+// zero configuration.
 package config
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 )
 
-// Config - конфигурация сервиса.
-// На шаге 1 используется только SQLitePath; PGDsn и EmbedURL нужны с step-2.
+// Config is the resolved service configuration.
 type Config struct {
-	// SQLitePath - путь к opencode.db (read-only).
+	// SQLitePath is the OpenCode source database (read-only).
 	SQLitePath string
-	// PGDsn - подключение к PostgreSQL (step-2).
-	PGDsn string
-	// EmbedURL - URL локального embedding-сервера (step-2).
+	// DBPath is the local SQLite index (memory.db). Writable.
+	DBPath string
+	// BlevePath is the optional Bleve index directory.
+	BlevePath string
+	// EmbedURL is the base URL of the embedding server (Ollama).
 	EmbedURL string
-	// EmbedDim - размерность эмбеддингов модели (step-2).
+	// EmbedDim is the embedding dimension; it fixes the vec0 table width.
 	EmbedDim int
+	// EmbedModel is the embedding model name.
+	EmbedModel string
+	// EmbedCache is the directory of the on-disk embedding cache.
+	EmbedCache string
+	// StoreBleveContent stores full content in Bleve (needed only for
+	// fragments; the coordinates and snippet work without it).
+	StoreBleveContent bool
 }
 
-// Load собирает конфигурацию из окружения, применяя дефолты.
+// Load builds the configuration from the environment, applying defaults.
 func Load() (*Config, error) {
+	dim, err := envInt("MEMORY_EMBED_DIM", 1024)
+	if err != nil {
+		return nil, err
+	}
 	c := &Config{
-		SQLitePath: getenv("MEMORY_SQLITE", defaultSQLitePath()),
-		PGDsn:      getenv("MEMORY_PG", ""),
-		EmbedURL:   getenv("MEMORY_EMBED_URL", "http://localhost:11434"),
-		EmbedDim:   getenvInt("MEMORY_EMBED_DIM", 768),
+		SQLitePath:        getenv("MEMORY_SQLITE", filepath.Join(defaultDataDir(), "opencode.db")),
+		DBPath:            getenv("MEMORY_DB", filepath.Join(defaultDataDir(), "memory.db")),
+		BlevePath:         getenv("MEMORY_BLEVE", filepath.Join(defaultDataDir(), "memory.bleve")),
+		EmbedURL:          getenv("MEMORY_EMBED_URL", "http://localhost:11434"),
+		EmbedDim:          dim,
+		EmbedModel:        getenv("MEMORY_EMBED_MODEL", "bge-m3"),
+		EmbedCache:        getenv("MEMORY_EMBED_CACHE", "./storage/embeddings"),
+		StoreBleveContent: true,
 	}
 	if c.SQLitePath == "" {
-		return nil, fmt.Errorf("config: MEMORY_SQLITE не задан и дефолтный путь не найден")
+		return nil, fmt.Errorf("config: MEMORY_SQLITE is not set and no default path is available")
+	}
+	if c.DBPath == "" {
+		return nil, fmt.Errorf("config: MEMORY_DB is not set and no default path is available")
 	}
 	return c, nil
 }
 
-// defaultSQLitePath возвращает стандартный путь opencode для linux.
-func defaultSQLitePath() string {
+// defaultDataDir is the OpenCode data directory for linux.
+func defaultDataDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return home + "/.local/share/opencode/opencode.db"
+	return filepath.Join(home, ".local/share/opencode")
 }
 
 func getenv(key, def string) string {
@@ -50,16 +74,23 @@ func getenv(key, def string) string {
 }
 
 func getenvInt(key string, def int) int {
-	v := os.Getenv(key)
-	if v == "" {
+	n, err := envInt(key, def)
+	if err != nil {
 		return def
 	}
-	n := 0
-	for _, ch := range v {
-		if ch < '0' || ch > '9' {
-			return def
-		}
-		n = n*10 + int(ch-'0')
-	}
 	return n
+}
+
+// envInt parses a positive integer environment variable. An empty variable
+// yields def; a malformed or non-positive value is an error.
+func envInt(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("config: %s must be a positive integer, got %q", key, v)
+	}
+	return n, nil
 }

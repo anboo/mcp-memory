@@ -1,19 +1,20 @@
-// Package extract читает opencode.db (SQLite) в режиме read-only.
+// Package extract reads opencode.db (SQLite) in read-only mode.
 //
-// Источник данных: ~/.local/share/opencode/opencode.db.
-// Только финальные проекции: session, message, part (не event - там
-// промежуточные апдейты, см. tasks/opencode-arch.md раздел A2).
+// Source: ~/.local/share/opencode/opencode.db. Only final projections are
+// read: session, message, part. The event table (intermediate updates) is not
+// used.
 package extract
 
 import (
 	"database/sql"
 	"fmt"
 
-	_ "modernc.org/sqlite" // чистый Go драйвер, без cgo
+	_ "modernc.org/sqlite" // pure-Go driver, no cgo
 )
 
-// Open открывает базу строго на чтение.
-// mode=ro: opencode работает с базой постоянно (WAL), запись запрещена.
+// Open opens the database strictly read-only.
+// mode=ro: OpenCode keeps writing to this database (WAL), so writes are
+// forbidden here and must never be attempted.
 func Open(path string) (*sql.DB, error) {
 	dsn := "file:" + path + "?mode=ro&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)

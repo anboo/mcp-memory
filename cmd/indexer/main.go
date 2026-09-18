@@ -1,12 +1,13 @@
-// indexer - индексация сессий opencode.db в PostgreSQL/pgvector.
+// Command indexer builds the local memory index from the OpenCode source
+// database.
 //
-// Режимы:
+// Modes:
 //
-//	--all          сводка по базе (диагностика, step-1)
-//	--session <id> диалог одной сессии (диагностика, step-1)
-//	--index        индексация (step-2): чанкинг -> эмбеддинги -> PG
-//	--project <p>  фильтр индексации по worktree
-//	--limit N      максимум сессий за прогон
+//	--all              summary of the whole database (diagnostics)
+//	--session <id>     dump one session dialog (diagnostics)
+//	--index            index sessions into memory.db and the Bleve index
+//	--project <path>   restrict indexing to one project worktree
+//	--limit N          cap the number of sessions indexed in this run
 package main
 
 import (
@@ -15,25 +16,29 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"time"
 
-	"opencode-rag/internal/chunk"
+	"opencode-rag/internal/bleveidx"
 	"opencode-rag/internal/config"
 	"opencode-rag/internal/embed"
 	"opencode-rag/internal/extract"
+	"opencode-rag/internal/indexer"
 	"opencode-rag/internal/store"
 )
 
 func main() {
 	var (
-		all        = flag.Bool("all", false, "показать сводку по всем сессиям")
-		session    = flag.String("session", "", "показать диалог конкретной сессии")
-		index      = flag.Bool("index", false, "индексировать сессии в PostgreSQL")
-		project    = flag.String("project", "", "фильтр индексации по worktree")
-		limit      = flag.Int("limit", 0, "максимум сессий за прогон индексации (0 = все)")
-		dialogN    = flag.Int("dialog-limit", 40, "максимум частей в выводе диалога")
-		embedPause = flag.Duration("embed-pause", 150*time.Millisecond, "пауза между батчами эмбеддингов (троттлинг)")
+		all        = flag.Bool("all", false, "show a summary of all sessions")
+		session    = flag.String("session", "", "dump the dialog of one session")
+		index      = flag.Bool("index", false, "index sessions into the local index")
+		project    = flag.String("project", "", "restrict indexing to one project worktree")
+		limit      = flag.Int("limit", 0, "maximum sessions to index in this run (0 = all)")
+		dialogN    = flag.Int("dialog-limit", 40, "maximum parts printed in a dialog dump")
+		embedPause = flag.Duration("embed-pause", 150*time.Millisecond, "pause between embedding batches")
+		noBleve    = flag.Bool("no-bleve", false, "do not build or update the Bleve index")
+		backfill   = flag.Bool("backfill", true, "compute vectors for chunks that have none yet")
 	)
 	flag.Parse()
 
@@ -49,13 +54,9 @@ func main() {
 	defer db.Close()
 
 	ctx := context.Background()
-
 	switch {
 	case *index:
-		if cfg.PGDsn == "" {
-			log.Fatal("index: MEMORY_PG не задан")
-		}
-		runIndex(ctx, db, cfg, *project, *limit, *embedPause)
+		runIndex(ctx, db, cfg, *project, *limit, *embedPause, *noBleve, *backfill)
 	case *all:
 		runSummary(ctx, db)
 	case *session != "":
@@ -66,154 +67,87 @@ func main() {
 	}
 }
 
-// embedder - интерфейс эмбеддингов (позволяет подменять троттлинг-обёртку).
-type embedder interface {
-	Embed(ctx context.Context, texts []string, batchSize int) ([][]float32, error)
-}
-
-// throttledEmbedder - обёртка с паузой между батчами (не грузит машину).
-type throttledEmbedder struct {
-	emb   *embed.Client
-	pause time.Duration
-}
-
-func (t *throttledEmbedder) Embed(ctx context.Context, texts []string, batchSize int) ([][]float32, error) {
-	vecs, err := t.emb.Embed(ctx, texts, batchSize)
-	if err != nil {
-		return nil, err
-	}
-	if t.pause > 0 {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(t.pause):
-		}
-	}
-	return vecs, nil
-}
-
-// runIndex - конвейер индексации одной сессии (arch-док B4).
-func runIndex(ctx context.Context, db *sql.DB, cfg *config.Config, projectFilter string, limit int, embedPause time.Duration) {
-	st, err := store.New(ctx, cfg.PGDsn)
+// runIndex opens the local index, resolves the optional embedder and Bleve
+// index, and runs one indexing pass.
+func runIndex(ctx context.Context, src *sql.DB, cfg *config.Config, project string, limit int, embedPause time.Duration, noBleve, backfill bool) {
+	st, err := store.Open(ctx, cfg.DBPath, cfg.EmbedDim, cfg.EmbedModel)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer st.Close()
 
-	var emb embedder = &throttledEmbedder{
-		emb:   embed.New(cfg.EmbedURL, "bge-m3", "./storage/embeddings", cfg.EmbedDim),
-		pause: embedPause,
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger.Info("index start",
+		"source", cfg.SQLitePath,
+		"db", cfg.DBPath,
+		"bleve", cfg.BlevePath,
+		"embed_model", cfg.EmbedModel,
+		"embed_dim", cfg.EmbedDim,
+		"limit", limit,
+	)
+
+	// Bleve is optional. A lock conflict or a broken index must not stop the
+	// SQLite path.
+	var bleveIndex indexer.BleveIndex
+	if !noBleve {
+		b, err := bleveidx.OpenOrCreate(cfg.BlevePath, cfg.StoreBleveContent)
+		if err != nil {
+			logger.Warn("bleve unavailable, continuing with SQLite only", "error", err.Error())
+		} else {
+			bleveIndex = b
+			defer b.Close()
+		}
+	} else {
+		logger.Info("bleve disabled by flag")
 	}
 
-	projects, err := extract.ProjectMap(ctx, db)
+	// Embeddings are optional too: probe once, then run FTS-only if the
+	// server is not reachable.
+	var emb indexer.Embedder
+	client := embed.New(cfg.EmbedURL, cfg.EmbedModel, cfg.EmbedCache, cfg.EmbedDim)
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	if err := client.Ping(probeCtx); err != nil {
+		logger.Warn("embedder unavailable, indexing FTS-only and leaving vectors pending", "error", err.Error())
+	} else {
+		emb = client
+	}
+	cancel()
+
+	rep := indexer.NewReporter(logger, 15*time.Second)
+	stats, err := indexer.Run(ctx, indexer.Config{
+		Source:     src,
+		Store:      st,
+		Bleve:      bleveIndex,
+		Embed:      emb,
+		Project:    project,
+		Limit:      limit,
+		EmbedBatch: 64,
+		EmbedPause: embedPause,
+		Progress:   rep,
+		Backfill:   backfill,
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
-	sessions, err := extract.ListSessions(ctx, db)
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	start := time.Now()
-	done, skipped, failed := 0, 0, 0
-	for _, s := range sessions {
-		if limit > 0 && done+skipped+failed >= limit {
-			break
-		}
-		path := projects[s.ProjectID]
-		if path == "" {
-			path = "(global)"
-		}
-		if projectFilter != "" && path != projectFilter {
-			continue
-		}
-
-		need, err := st.NeedsIndexing(ctx, s.ID, s.TimeUpdated)
-		if err != nil {
-			log.Printf("skip %s: %v", s.ID, err)
-			skipped++
-			continue
-		}
-		if !need {
-			skipped++
-			continue
-		}
-
-		if err := indexSession(ctx, db, st, emb, &s, path); err != nil {
-			log.Printf("FAIL %s (%s): %v", s.ID, s.Title, err)
-			_ = st.SetSyncState(ctx, s.ID, s.TimeUpdated, "error", err.Error())
-			failed++
-			continue
-		}
-		done++
-		log.Printf("OK %s (%s) [%s]", s.ID[:12], truncate(s.Title, 40), time.Since(start).Round(time.Second))
-	}
-
-	n, _ := st.ChunkCount(ctx)
-	sn, _ := st.SessionCount(ctx)
-	log.Printf("готово: %d проиндексировано, %d пропущено, %d ошибок за %s",
-		done, skipped, failed, time.Since(start).Round(time.Second))
-	log.Printf("итог: %d чанков, %d сессий в PG", n, sn)
-}
-
-// indexSession индексирует одну сессию: чанки -> эмбеддинги -> PG.
-func indexSession(ctx context.Context, db *sql.DB, st *store.Store, emb embedder,
-	s *extract.Session, projectPath string) error {
-
-	parts, err := extract.PartsWithPosition(ctx, db, s.ID)
-	if err != nil {
-		return err
-	}
-	extract.MarkCompacted(s, partsToParts(parts))
-
-	msgs, err := extract.ListMessages(ctx, db, s.ID)
-	if err != nil {
-		return err
-	}
-	msgMap := make(map[string]extract.Message, len(msgs))
-	for _, m := range msgs {
-		msgMap[m.ID] = m
-	}
-
-	chunks := chunk.Chunkify(s.ID, s.ProjectID, projectPath, parts, msgMap)
-
-	// эмбеддинги только для text/tool (B6.1), текст обрезан до MaxEmbedContentLen
-	var toEmbed []string
-	var embedIdx []int
-	for i := range chunks {
-		if chunk.NeedsEmbedding(&chunks[i]) {
-			toEmbed = append(toEmbed, chunk.EmbedContent(&chunks[i]))
-			embedIdx = append(embedIdx, i)
-		}
-	}
-	if len(toEmbed) > 0 {
-		vecs, err := emb.Embed(ctx, toEmbed, 64)
-		if err != nil {
-			return fmt.Errorf("embed: %w", err)
-		}
-		for j, idx := range embedIdx {
-			chunks[idx].Embedding = vecs[j]
-		}
-	}
-
-	if err := st.ReplaceSessionChunks(ctx, chunks); err != nil {
-		return err
-	}
-	if err := st.UpsertSession(ctx, store.MetaFromSession(s, projectPath, len(parts))); err != nil {
-		return err
-	}
-	if err := st.SetSyncState(ctx, s.ID, s.TimeUpdated, "indexed", ""); err != nil {
-		return err
-	}
-	return nil
-}
-
-func partsToParts(in []extract.PartWithPos) []extract.Part {
-	out := make([]extract.Part, len(in))
-	for i, p := range in {
-		out[i] = p.Part
-	}
-	return out
+	chunks, _ := st.ChunkCount(ctx)
+	vectors, _ := st.VectorCount(ctx)
+	pending, _ := st.PendingVectorCount(ctx)
+	logger.Info("index result",
+		"discovered", stats.Discovered,
+		"indexed", stats.Indexed,
+		"skipped", stats.Skipped,
+		"failed", stats.Failed,
+		"chunks_written", stats.Chunks,
+		"embeddings", stats.Embedded,
+		"pending_vectors", pending,
+		"backfilled", stats.Backfilled,
+		"bleve_docs_added", stats.BleveDocs,
+		"bleve_errors", stats.BleveErrors,
+		"chunks_total", chunks,
+		"vectors_total", vectors,
+		"elapsed", stats.Elapsed.Round(time.Millisecond),
+	)
 }
 
 func runSummary(ctx context.Context, db *sql.DB) {
@@ -245,20 +179,17 @@ func runSummary(ctx context.Context, db *sql.DB) {
 		}
 	}
 
-	fmt.Printf("сессий:      %d\n", len(sessions))
-	fmt.Printf("сообщений:   %d\n", totalMessages)
-	fmt.Printf("частей:      %d\n", totalParts)
-	fmt.Printf("проектов:    %d\n", len(projects))
-	fmt.Printf("скомпактировано: %d\n", compacted)
-	fmt.Println("--- последние 5 сессий ---")
+	fmt.Printf("sessions:  %d\n", len(sessions))
+	fmt.Printf("messages:  %d\n", totalMessages)
+	fmt.Printf("parts:     %d\n", totalParts)
+	fmt.Printf("projects:  %d\n", len(projects))
+	fmt.Printf("compacted: %d\n", compacted)
+	fmt.Println("--- last 5 sessions ---")
 	for i := 0; i < len(sessions) && i < 5; i++ {
 		s := sessions[i]
-		path := projects[s.ProjectID]
-		if path == "" {
-			path = "(global)"
-		}
+		path := projectPath(projects, s.ProjectID)
 		fmt.Printf("  %s  %-16s  %-14s  %s  [%d]\n",
-			s.ID[:12], truncate(s.Title, 24), s.Agent, path, s.TimeUpdated)
+			shortID(s.ID), truncate(s.Title, 24), s.Agent, path, s.TimeUpdated)
 	}
 }
 
@@ -276,23 +207,26 @@ func runSession(ctx context.Context, db *sql.DB, sessionID string, limit int) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	extract.MarkCompacted(s, partsToParts(parts))
+	allParts := make([]extract.Part, len(parts))
+	for i := range parts {
+		allParts[i] = parts[i].Part
+	}
+	extract.MarkCompacted(s, allParts)
 
 	mi := s.ModelInfo()
-	path := projects[s.ProjectID]
-	fmt.Printf("сессия:    %s\n", s.ID)
-	fmt.Printf("заголовок: %s\n", s.Title)
-	fmt.Printf("проект:    %s (%s)\n", path, s.ProjectID)
-	fmt.Printf("агент:     %s\n", s.Agent)
-	fmt.Printf("модель:    %s/%s\n", mi.ProviderID, mi.ID)
-	fmt.Printf("время:     %d .. %d\n", s.TimeCreated, s.TimeUpdated)
-	fmt.Printf("частей:    %d\n", len(parts))
-	fmt.Printf("компакция: %v (tail=%s)\n", s.Compacted, s.TailStartID)
-	fmt.Println("--- диалог (первые", limit, "частей) ---")
+	fmt.Printf("session:   %s\n", s.ID)
+	fmt.Printf("title:     %s\n", s.Title)
+	fmt.Printf("project:   %s (%s)\n", projectPath(projects, s.ProjectID), s.ProjectID)
+	fmt.Printf("agent:     %s\n", s.Agent)
+	fmt.Printf("model:     %s/%s\n", mi.ProviderID, mi.ID)
+	fmt.Printf("time:      %d .. %d\n", s.TimeCreated, s.TimeUpdated)
+	fmt.Printf("parts:     %d\n", len(parts))
+	fmt.Printf("compacted: %v (tail=%s)\n", s.Compacted, s.TailStartID)
+	fmt.Println("--- dialog (first", limit, "parts) ---")
 
 	for i, p := range parts {
 		if i >= limit {
-			fmt.Printf("... ещё %d частей\n", len(parts)-limit)
+			fmt.Printf("... %d more parts\n", len(parts)-limit)
 			break
 		}
 		fmt.Printf("[%d] %s\n", p.Position, describePart(&p.Part))
@@ -325,7 +259,7 @@ func describePart(p *extract.Part) string {
 		if err != nil {
 			return "patch (parse error)"
 		}
-		return fmt.Sprintf("patch %d файлов: %s", len(t.Files), truncate(joinFiles(t.Files), 80))
+		return fmt.Sprintf("patch %d files: %s", len(t.Files), truncate(joinFiles(t.Files), 80))
 	case extract.PartTypeStepStart:
 		return "step-start"
 	case extract.PartTypeStepFinish:
@@ -336,6 +270,20 @@ func describePart(p *extract.Part) string {
 	default:
 		return p.Type
 	}
+}
+
+func projectPath(projects map[string]string, projectID string) string {
+	if p := projects[projectID]; p != "" {
+		return p
+	}
+	return "(global)"
+}
+
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 func truncate(s string, n int) string {

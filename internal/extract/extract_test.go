@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// newTestDB создаёт временную SQLite-базу с минимальной схемой opencode.
+// newTestDB creates a temporary SQLite database with a minimal OpenCode schema.
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
@@ -78,7 +78,7 @@ func seedTestData(t *testing.T, db *sql.DB) {
 	}{
 		{"prt_1", "msg_1", "text", "привет, посмотри tree.sql"},
 		{"prt_2", "msg_2", "reasoning", "The user wants me to look at git changes"},
-		{"prt_3", "msg_2", "tool", ""}, // tool наполняется ниже
+		{"prt_3", "msg_2", "tool", ""}, // the tool payload is filled in below
 		{"prt_4", "msg_2", "compaction", ""},
 	}
 	for i, p := range parts {
@@ -174,7 +174,7 @@ func TestPartsWithPosition(t *testing.T) {
 	if len(parts) != 4 {
 		t.Fatalf("parts = %d, want 4", len(parts))
 	}
-	// порядок: сообщение msg_1 (time 100) раньше msg_2 (time 200)
+	// Order: message msg_1 (time 100) comes before msg_2 (time 200).
 	if parts[0].ID != "prt_1" || parts[0].Position != 0 {
 		t.Fatalf("first part: %+v", parts[0])
 	}
