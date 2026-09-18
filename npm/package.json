@@ -1,5 +1,5 @@
 {
-  "name": "@anboo/mcp-memory",
+  "name": "@devanboo/mcp-memory",
   "version": "0.0.0-dev",
   "description": "Agent memory over the OpenCode session history, served over MCP (stdio). Downloads the CGO-free Go binary for your platform on first run.",
   "keywords": [

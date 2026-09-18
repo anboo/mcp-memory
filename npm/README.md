@@ -9,7 +9,7 @@ it, and runs it. There is no compiler and no database server involved.
 ## Install
 
 ```bash
-npx -y @anboo/mcp-memory install
+npx -y @devanboo/mcp-memory install
 ```
 
 `install` downloads the binary and adds the `memory` MCP server to your global
@@ -18,18 +18,18 @@ npx -y @anboo/mcp-memory install
 Then build the index once:
 
 ```bash
-npx -y @anboo/mcp-memory index
+npx -y @devanboo/mcp-memory index
 ```
 
 ## Commands
 
 ```bash
-npx -y @anboo/mcp-memory install     # download the binary, write MCP config
-npx -y @anboo/mcp-memory index       # build or update the local search index
-npx -y @anboo/mcp-memory serve       # run the MCP server (the MCP default)
-npx -y @anboo/mcp-memory sessions    # summary of the OpenCode database
-npx -y @anboo/mcp-memory session ID  # dump one session
-npx -y @anboo/mcp-memory version
+npx -y @devanboo/mcp-memory install     # download the binary, write MCP config
+npx -y @devanboo/mcp-memory index       # build or update the local search index
+npx -y @devanboo/mcp-memory serve       # run the MCP server (the MCP default)
+npx -y @devanboo/mcp-memory sessions    # summary of the OpenCode database
+npx -y @devanboo/mcp-memory session ID  # dump one session
+npx -y @devanboo/mcp-memory version
 ```
 
 An MCP client launches the wrapper with no arguments; it then runs the binary

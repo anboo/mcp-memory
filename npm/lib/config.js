@@ -9,7 +9,7 @@ const { parse, modify, applyEdits } = require("jsonc-parser");
 // npx so the config never contains an absolute path to a binary.
 const MEMORY_ENTRY = {
   type: "local",
-  command: ["npx", "-y", "@anboo/mcp-memory"],
+  command: ["npx", "-y", "@devanboo/mcp-memory"],
   enabled: true,
   timeout: 20000,
 };

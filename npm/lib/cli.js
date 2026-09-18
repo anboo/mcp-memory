@@ -8,7 +8,7 @@ const { resolve, writeMemoryEntry } = require("./config");
 
 const help = `mcp-memory - agent memory over the OpenCode session history
 
-Usage: npx -y @anboo/mcp-memory [command]
+Usage: npx -y @devanboo/mcp-memory [command]
 
 Commands:
   install          Download the binary and add the "memory" MCP server to
@@ -81,7 +81,7 @@ async function install(args) {
   console.log(`Binary: ${bin}`);
   console.log("");
   console.log("Restart OpenCode, then build the index once:");
-  console.log("  npx -y @anboo/mcp-memory index");
+  console.log("  npx -y @devanboo/mcp-memory index");
   return 0;
 }
 

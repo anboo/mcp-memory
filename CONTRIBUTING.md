@@ -235,7 +235,7 @@ then:
    `-ldflags "-X github.com/anboo/mcp-memory/internal/version.Version=<version>"`;
 2. attaches one `mcp-memory_<version>_<os>_<arch>.tar.gz` per target
    plus `checksums.txt` to a GitHub Release;
-3. publishes the npm wrapper `@anboo/mcp-memory` at the same version, so the
+3. publishes the npm wrapper `@devanboo/mcp-memory` at the same version, so the
    wrapper downloads the matching asset.
 
 Before the first release, add an `NPM_TOKEN` repository secret (an npm

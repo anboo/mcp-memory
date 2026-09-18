@@ -79,7 +79,7 @@ No CGO and no external database are required. `CGO_ENABLED=0` works.
 ### 1. Install with one command
 
 ```bash
-npx -y @anboo/mcp-memory install
+npx -y @devanboo/mcp-memory install
 ```
 
 This downloads the prebuilt CGO-free binary for your platform, caches it under
@@ -90,7 +90,7 @@ unless you pass `--force`. Restart OpenCode afterwards.
 Then build the index once (see step 3):
 
 ```bash
-npx -y @anboo/mcp-memory index
+npx -y @devanboo/mcp-memory index
 ```
 
 `npx` resolves the latest published version, so upgrades are automatic. If you
@@ -109,17 +109,17 @@ One binary contains everything: the MCP server and the indexer are subcommands.
 ### 3. Index the history
 
 The examples use the npm wrapper; for a local build replace
-`npx -y @anboo/mcp-memory` with `bin/mcp-memory`.
+`npx -y @devanboo/mcp-memory` with `bin/mcp-memory`.
 
 ```bash
 # Zero-config local mode. MEMORY_SQLITE defaults to the standard OpenCode path.
-npx -y @anboo/mcp-memory index
+npx -y @devanboo/mcp-memory index
 
 # Index only a few sessions (useful for a first try).
-npx -y @anboo/mcp-memory index --limit 3
+npx -y @devanboo/mcp-memory index --limit 3
 
 # Index one project only.
-npx -y @anboo/mcp-memory index --project /var/www/my-repo
+npx -y @devanboo/mcp-memory index --project /var/www/my-repo
 ```
 
 Re-running `index` is incremental: a session is re-indexed only when its
@@ -128,11 +128,11 @@ Re-running `index` is incremental: a session is re-indexed only when its
 Useful commands and flags:
 
 ```bash
-npx -y @anboo/mcp-memory sessions        # whole database summary (diagnostics)
-npx -y @anboo/mcp-memory session ses_xxx # dump one session dialog (diagnostics)
-npx -y @anboo/mcp-memory index --limit 10          # cap the number of sessions
-npx -y @anboo/mcp-memory index --no-bleve          # skip the Bleve index
-npx -y @anboo/mcp-memory index --embed-pause 150ms # throttle embedding batches
+npx -y @devanboo/mcp-memory sessions        # whole database summary (diagnostics)
+npx -y @devanboo/mcp-memory session ses_xxx # dump one session dialog (diagnostics)
+npx -y @devanboo/mcp-memory index --limit 10          # cap the number of sessions
+npx -y @devanboo/mcp-memory index --no-bleve          # skip the Bleve index
+npx -y @devanboo/mcp-memory index --embed-pause 150ms # throttle embedding batches
 ```
 
 ### 4. Start the embedding server (optional)
@@ -157,7 +157,7 @@ binary:
   "mcp": {
     "memory": {
       "type": "local",
-      "command": ["npx", "-y", "@anboo/mcp-memory"],
+      "command": ["npx", "-y", "@devanboo/mcp-memory"],
       "enabled": true,
       "timeout": 20000
     }

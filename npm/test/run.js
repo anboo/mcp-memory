@@ -32,7 +32,7 @@ const first = writeMemoryEntry(file);
 assert.ok(first.changed, "first write should change the file");
 let doc = parse(fs.readFileSync(file, "utf8"));
 assert.strictEqual(doc.mcp.memory.type, "local");
-assert.deepStrictEqual(doc.mcp.memory.command, ["npx", "-y", "@anboo/mcp-memory"]);
+assert.deepStrictEqual(doc.mcp.memory.command, ["npx", "-y", "@devanboo/mcp-memory"]);
 
 // Re-running keeps the existing entry unless forced.
 const second = writeMemoryEntry(file);
