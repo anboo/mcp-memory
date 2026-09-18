@@ -1,11 +1,14 @@
-# Бинарники
+# Binaries
 /bin/
 
-# Кэш и данные (не в git)
+# Embedding cache and local data (not committed)
 /storage/
 
-# Локальные конфиги
+# Local configuration
 .env
 
-# Планы и внутренние заметки (не в git)
-/tasks/
+# IDE
+/.idea/
+
+# Research artifacts: spike code, benchmark data, notes (not committed)
+/research/
