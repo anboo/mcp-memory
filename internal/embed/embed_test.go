@@ -2,9 +2,13 @@ package embed
 
 import (
 	"context"
+	"encoding/json"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +31,48 @@ func TestEmbedBatch(t *testing.T) {
 		if math.Abs(float64(v[0])) > 100 {
 			t.Fatalf("suspicious vector: %v", v[:3])
 		}
+	}
+}
+
+// TestEmbedTruncatesOversizedInput covers the fallback used when the server
+// rejects a batch because one input is longer than the model context.
+func TestEmbedTruncatesOversizedInput(t *testing.T) {
+	var sawNumCtx bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req embedRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if req.Options["num_ctx"] == float64(DefaultNumCtx) {
+			sawNumCtx = true
+		}
+		for _, in := range req.Input {
+			if len([]rune(in)) > 3000 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"the input length exceeds the context length"}`))
+				return
+			}
+		}
+		embs := make([][]float32, len(req.Input))
+		for i := range embs {
+			embs[i] = []float32{1, 0}
+		}
+		_ = json.NewEncoder(w).Encode(embedResponse{Embeddings: embs})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "m", "", 2)
+	vecs, err := c.Embed(context.Background(), []string{strings.Repeat("x", 5000)}, 8)
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if len(vecs) != 1 || len(vecs[0]) != 2 {
+		t.Fatalf("vecs = %v", vecs)
+	}
+	if !sawNumCtx {
+		t.Fatalf("request should carry options.num_ctx = %d", DefaultNumCtx)
 	}
 }
 
