@@ -4,8 +4,9 @@ Agent memory over the full OpenCode session history.
 
 OpenCode stores every session, message and message part in a single SQLite
 database (`~/.local/share/opencode/opencode.db`). Once a session is compacted,
-the earlier context is gone from the model window. This project makes that
-history searchable again through MCP, so an agent can ask questions like:
+the earlier context is gone from the model window. This project indexes that
+history into a local search index and exposes it through MCP, so an agent can
+ask questions like:
 
 > What did we already try with Redis Cluster in this project, why did the first
 > approach fail, and what did we end up with?
@@ -16,109 +17,109 @@ The design principle is simple: **the MCP server stays dumb**. It exposes cheap
 search and read primitives; the current model decides what to look up, reads the
 original context, and does the reasoning. Nothing is pre-summarized.
 
-## How it works
+## Architecture
 
 ```
               OpenCode SQLite (read-only)
                         |
                         v
               +---------------------+
-              |  Indexer (Go)       |  full or incremental sync
+              |  indexer (Go)       |  full or incremental sync
               |  extract + chunk    |
-              |  + embed (HTTP)     |
-              +----------+----------+
-                         |
-                chunks + embeddings
-                         |
-                         v
-              +---------------------+
-              | PostgreSQL+pgvector |
-              |  chunks (vector+FTS+meta)
-              +----------+----------+
-                         |
-            +------------+------------+
-            |                         |
-            v                         v
-   MCP Server (Go)            memory_read:
-   memory_search              reads originals
-   memory_session             from opencode.db
-   memory_context             (read-only)
-            |
-            v
+              |  + embed (optional) |
+              +----+-----------+----+
+                   |           |
+        same chunk stream      |
+                   |           v
+                   |     +---------------------+
+                   |     | Bleve secondary     |
+                   |     | lexical index       |
+                   |     +---------------------+
+                   v
+        +-------------------------------+
+        | memory.db (SQLite)            |
+        |  chunks + FTS5 + sqlite-vec   |
+        +---------------+---------------+
+                        |
+             +----------+----------+
+             |                     |
+             v                     v
+    MCP server (Go)         memory_read:
+    memory_search           reads originals
+    memory_session          from opencode.db
+    memory_context          (read-only)
+    memory_status
+             |
+             v
       OpenCode agent (the current model decides what to search)
 ```
 
 Two stores are used on purpose:
 
-- **PostgreSQL + pgvector** - the search index: vectors, full text, metadata
-  and coordinates. Returns candidates fast.
-- **SQLite `opencode.db` (read-only)** - the source of originals. `memory_read`
+- **`memory.db` (SQLite)** - the search index: FTS5 full text, sqlite-vec
+  vectors, metadata and coordinates. A single local file, no server.
+- **`opencode.db` (read-only)** - the source of originals. `memory_read`
   returns full texts and command output, not truncated index snippets.
+
+The optional **Bleve** index adds a stronger lexical layer for Russian natural
+language. It can be absent: search then degrades to SQLite only.
 
 ## Requirements
 
 - Go 1.26+
-- Docker (for PostgreSQL with pgvector) or any PostgreSQL 16+ with the
-  `vector` extension
-- An embedding server exposing the Ollama `/api/embed` endpoint (for example
-  Ollama with `bge-m3` pulled)
+- Optional: an embedding server exposing the Ollama `/api/embed` endpoint
+  (for example Ollama with `bge-m3`). Without it the index is FTS-only and
+  vectors stay pending until the server is available.
+
+No CGO and no external database are required. `CGO_ENABLED=0` works.
 
 ## Quick start
 
-### 1. Start PostgreSQL
-
-```bash
-docker compose up -d
-```
-
-This starts `pgvector/pgvector:pg16` on port `5434` with user/password/db all
-set to `memory`.
-
-### 2. Apply the schema
-
-```bash
-psql "postgres://memory:memory@localhost:5434/memory?sslmode=disable" \
-  -f migrations/001_init.sql
-```
-
-### 3. Start the embedding server
-
-The indexer and the MCP server both call an HTTP embedding endpoint. With
-Ollama:
-
-```bash
-ollama serve
-ollama pull bge-m3
-```
-
-### 4. Build
+### 1. Build
 
 ```bash
 go build -o bin/indexer ./cmd/indexer
 go build -o bin/mcp ./cmd/mcp
 ```
 
-### 5. Index the history
+### 2. Index the history
 
 ```bash
-export MEMORY_PG="postgres://memory:memory@localhost:5434/memory?sslmode=disable"
-export MEMORY_EMBED_DIM=1024
+# Zero-config local mode. MEMORY_SQLITE defaults to the standard OpenCode path.
 bin/indexer --index
-```
 
-Useful flags:
+# Index only a few sessions (useful for a first try).
+bin/indexer --index --limit 3
 
-```bash
-bin/indexer --all               # summary of the whole database (diagnostics)
-bin/indexer --session ses_xxx   # dump one session dialog (diagnostics)
-bin/indexer --index --project /var/www/my-repo   # index one project only
-bin/indexer --index --limit 10  # cap the number of sessions this run
+# Index one project only.
+bin/indexer --index --project /var/www/my-repo
 ```
 
 Re-running `--index` is incremental: a session is re-indexed only when its
 `time_updated` is newer than the last sync, or its previous attempt failed.
 
-### 6. Run the MCP server
+Useful flags:
+
+```bash
+bin/indexer --all                 # summary of the whole database (diagnostics)
+bin/indexer --session ses_xxx     # dump one session dialog (diagnostics)
+bin/indexer --limit 10            # cap the number of sessions in this run
+bin/indexer --no-bleve            # skip the Bleve index
+bin/indexer --embed-pause 150ms   # throttle between embedding batches
+```
+
+### 3. Start the embedding server (optional)
+
+```bash
+ollama serve
+ollama pull bge-m3
+```
+
+When Ollama is not running, the indexer logs a warning, writes the FTS rows
+and leaves vectors pending. A later run with the embedder available backfills
+them.
+
+### 4. Run the MCP server
 
 The server speaks MCP over stdio. Example `opencode.json` entry:
 
@@ -130,7 +131,10 @@ The server speaks MCP over stdio. Example `opencode.json` entry:
       "command": ["/var/www/opencode-rag/bin/mcp"],
       "enabled": true,
       "environment": {
-        "MEMORY_PG": "postgres://memory:memory@localhost:5434/memory?sslmode=disable",
+        "MEMORY_SQLITE": "/home/you/.local/share/opencode/opencode.db",
+        "MEMORY_DB": "/home/you/.local/share/opencode/memory.db",
+        "MEMORY_BLEVE": "/home/you/.local/share/opencode/memory.bleve",
+        "MEMORY_EMBED_URL": "http://localhost:11434",
         "MEMORY_EMBED_DIM": "1024"
       }
     }
@@ -138,29 +142,34 @@ The server speaks MCP over stdio. Example `opencode.json` entry:
 }
 ```
 
+All of those variables have defaults, so an empty environment works too.
+
 ## Configuration
 
 All configuration comes from environment variables.
 
-| Variable           | Default                                          | Description                                  |
-|--------------------|--------------------------------------------------|----------------------------------------------|
-| `MEMORY_SQLITE`    | `~/.local/share/opencode/opencode.db`            | Path to the OpenCode SQLite database (read-only) |
-| `MEMORY_PG`        | (empty)                                          | PostgreSQL DSN. Required for indexing and MCP |
-| `MEMORY_EMBED_URL` | `http://localhost:11434`                         | Base URL of the embedding server             |
-| `MEMORY_EMBED_DIM` | `768`                                            | Embedding vector dimension                   |
+| Variable            | Default                                          | Description                                      |
+|---------------------|--------------------------------------------------|--------------------------------------------------|
+| `MEMORY_SQLITE`     | `~/.local/share/opencode/opencode.db`            | Path to the OpenCode database (read-only)        |
+| `MEMORY_DB`         | `~/.local/share/opencode/memory.db`              | Path to the SQLite index                          |
+| `MEMORY_BLEVE`      | `~/.local/share/opencode/memory.bleve`           | Path to the Bleve index directory                |
+| `MEMORY_EMBED_URL`  | `http://localhost:11434`                         | Base URL of the embedding server                 |
+| `MEMORY_EMBED_DIM`  | `1024`                                           | Embedding vector dimension                       |
+| `MEMORY_EMBED_MODEL`| `bge-m3`                                         | Embedding model name                             |
+| `MEMORY_EMBED_CACHE`| `./storage/embeddings`                           | On-disk embedding cache                          |
 
-Note: the shipped migration declares `vector(1024)`, which matches `bge-m3`.
-Set `MEMORY_EMBED_DIM=1024` to match, otherwise the insert will fail on the
-vector column.
+`MEMORY_EMBED_DIM` fixes the width of the `vec0` vector table. Changing it
+after indexing fails with an explicit error; use a fresh `MEMORY_DB` (or set
+the old dimension back) and reindex.
 
 ## MCP tools
 
-All four tools are cheap and contain no LLM calls.
+All tools are cheap and contain no LLM calls.
 
 ### `memory_search`
 
-Hybrid semantic + exact search over the whole history. Returns snippets with
-coordinates for follow-up reads.
+Hybrid search over the whole history. Returns snippets with `session_id` and
+`position` for follow-up reads, plus a `sources` list and a `degraded` flag.
 
 Arguments: `query` (required), `project`, `type`
 (`text|tool|patch|reasoning`), `time_from` (epoch ms), `limit` (default 20,
@@ -172,27 +181,29 @@ Random access into the original history: a window of parts around a coordinate.
 Returns full text and command output, not snippets.
 
 Arguments: `session_id` (required), `position` (required), `before` (default 5),
-`after` (default 10). The total window is capped at 50 parts and tool output is
-truncated at 16 KiB per part.
+`after` (default 10). The window is capped at 50 parts and tool output at 16 KiB
+per part.
 
 ### `memory_session`
 
 Session metadata plus a map of messages and their part types. No full texts, so
 the agent can see which topics a session covered before reading it.
 
-Arguments: `session_id` (required).
-
 ### `memory_context`
 
 The same window as `memory_read`, but addressed by `part_id` (`prt_xxx`)
 instead of `(session_id, position)`.
 
-Arguments: `part_id` (required), `before`, `after`.
+### `memory_status`
+
+Index health: session/chunk/vector counts, pending vectors, embedding model and
+dimension, last sync time, Bleve document count, and which retrieval sources are
+currently available.
 
 Typical research loop:
 
 ```
-memory_search(query)          -> snippets + coordinates
+memory_search(query)          -> snippets + coordinates + sources
       |
       +-- need context -> memory_read(session, position, before, after)
       |                        |
@@ -207,15 +218,27 @@ searched is the agent's own history.
 
 ## Search model
 
-PostgreSQL provides both vectors (pgvector) and full text (`tsvector`), so
-hybrid search runs in a single database.
+Four candidate lists are produced and merged with reciprocal rank fusion
+(RRF, `k = 60`):
 
-- Vector search (cosine) catches semantics: "why does Kafka not connect".
-- Full-text search catches exact names: `CLUSTERDOWN`, `tree.sql`, `RISKS-123`.
-- Filters by project, part type and time are applied in `WHERE` before merging.
-- The two result lists are merged in Go with reciprocal rank fusion (RRF,
-  `k = 60`), which is robust to differently scaled scores.
-- If one source fails, search degrades gracefully to the other.
+- FTS5 `unicode61` over raw content;
+- FTS5 over a Snowball-russian stemmed copy of the content;
+- sqlite-vec `vec0` exact KNN over embeddings (optional);
+- Bleve lexical search (optional secondary index).
+
+Filters by project, part type and time are applied before the merge.
+
+Graceful degradation:
+
+| Situation                          | Behavior                                        |
+|------------------------------------|-------------------------------------------------|
+| Embedder unavailable               | FTS + Bleve only; vectors stay pending          |
+| Bleve index missing or locked      | SQLite only                                     |
+| Both unavailable                   | FTS only, `degraded: true` in the response      |
+| All sources fail                   | Error is returned                               |
+
+The response always lists the sources that contributed, so the model knows how
+much to trust the recall.
 
 ## What gets indexed
 
@@ -235,6 +258,35 @@ contains exact names and hypotheses.
 `position` is a stable per-session coordinate assigned by ordering parts on
 `(message time_created, part rowid)`.
 
+## Migrations
+
+Schema changes live in numbered `.sql` files under `migrations/`, embedded into
+the binary with `go:embed` and applied by `internal/migrate` in numeric order,
+one transaction each. Progress is tracked in `PRAGMA user_version`, so applying
+is idempotent and no migration library is needed.
+
+The `vec0` vector table is created by Go code because its dimension comes from
+configuration. The dimension is recorded in the `meta` table. If
+`MEMORY_EMBED_DIM` changes after the index was built, startup fails with an
+actionable mismatch error instead of silently mixing vector spaces.
+
+To add a migration, create `migrations/0002_<name>.sql`; never edit an applied
+migration in place.
+
+## Bleve secondary index
+
+Bleve is a local, CGO-free lexical index. Its mapping uses:
+
+- `content` with the Russian analyzer (morphology, stop words);
+- `content_exact` with the simple analyzer (exact identifiers, no stemming);
+- stored `session_id`, `position`, `project_path`, `part_type`, `role`, `tool`,
+  `time_created`, `snippet` for coordinates and display.
+
+Bleve's own vector path (which requires CGO and a build tag) is intentionally
+not used; vectors live in sqlite-vec. The index is optional: if its directory
+is missing or locked by another process, search degrades to SQLite only. The
+indexer creates and updates it; the MCP server only opens it.
+
 ## Project layout
 
 ```
@@ -243,37 +295,35 @@ cmd/
   mcp/main.go            # MCP server (stdio)
 internal/
   config/                # env configuration
-  extract/               # read SQLite: sessions, messages, parts, coordinates
-  chunk/                 # part -> chunk policy (what to index and how)
+  extract/               # read opencode.db: sessions, messages, parts, coordinates
+  chunk/                 # part -> chunk policy
+  stem/                  # Snowball-russian stemming and FTS match building
   embed/                 # HTTP embedding client, batching, retries, disk cache
-  store/                 # pgx repository: chunks, sessions, sync_state
-  search/                # hybrid search: vector + FTS, RRF merge
-  mcp/                   # MCP tools: search/read/session/context
-migrations/              # PostgreSQL schema
+  migrate/               # embedded migration runner and vec0 dimension handling
+  store/                 # SQLite repository: chunks, FTS, vectors, sync_state
+  search/                # hybrid search: FTS + vector + Bleve, RRF merge
+  bleveidx/              # Bleve secondary lexical index
+  indexer/               # indexing pipeline and progress reporting
+  mcp/                   # MCP tools: search/read/session/context/status
+migrations/              # numbered SQL migrations (embedded)
 storage/                 # embedding cache (not in git)
+research/                # research spike (gitignored, separate Go module)
 ```
-
-## Database schema
-
-- `chunks` - the search index: one row per indexed part, with `content`,
-  `snippet`, `files`, `position`, `time_created`, `embedding vector`, plus a
-  GIN index on `to_tsvector('russian', content)` and an HNSW index on the
-  embedding.
-- `sessions` - session metadata (title, agent, model, project, times,
-  compaction info).
-- `sync_state` - per-session sync status (`pending | indexed | error`) and the
-  last indexed `time_updated`, used for incremental runs.
-- `traces` - reserved for MCP call tracing.
 
 ## Development
 
 ```bash
-go test ./...
+go build ./...
 go vet ./...
+go test ./...
 ```
 
-Most packages have unit tests and do not require a database. The SQLite and
-PostgreSQL paths are exercised through their public interfaces with fakes.
+Tests do not require a database, network or Ollama. They use temporary
+SQLite files, a fake embedder and a temporary Bleve index. CGO is not needed:
+
+```bash
+CGO_ENABLED=0 go build ./cmd/indexer ./cmd/mcp
+```
 
 ## Design notes
 
@@ -287,4 +337,4 @@ PostgreSQL paths are exercised through their public interfaces with fakes.
 4. **No context auto-injection.** Memory is not injected into every turn. The
    agent gets tools plus a short system prompt and decides when to search.
 5. **Read OpenCode's SQLite in read-only mode.** OpenCode keeps writing to it
-   (WAL), so the connection must never write.
+   (WAL), so the connection must never write. Only `memory.db` is writable.
