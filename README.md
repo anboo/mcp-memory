@@ -64,6 +64,82 @@ Two stores are used on purpose:
 The optional **Bleve** index adds a stronger lexical layer for Russian natural
 language. It can be absent: search then degrades to SQLite only.
 
+## Storage: SQLite and Bleve
+
+Two local, serverless stores hold everything. There is no PostgreSQL, no
+external service and no CGO.
+
+### `memory.db` (SQLite, writable)
+
+A single file with FTS5 full text, sqlite-vec vectors and coordinates. The
+schema lives in `migrations/0001_init.sql`; the vec0 table is created by
+`internal/migrate.EnsureVectorTable` because its width comes from
+`MEMORY_EMBED_DIM`.
+
+| Object | Kind | Holds |
+|--------|------|-------|
+| `chunks` | table | one row per indexed part: ids, project, part type, tool, command, `content`, `snippet`, `files`, `position`, times, `truncated`, `embed_text`, `stemmed`, `embedded` |
+| `fts_unicode` | FTS5 (unicode61) | raw `content`, external-content over `chunks` |
+| `fts_stem` | FTS5 (unicode61) | Snowball-russian `stemmed` copy, external-content over `chunks` |
+| `vec_chunks` | vec0 (sqlite-vec) | KNN embeddings, `rowid` matches `chunks`, width = `MEMORY_EMBED_DIM` |
+| `sessions` | table | session metadata for status and project mapping |
+| `sync_state` | table | per-session status (`pending`/`indexed`/`error`) and `last_time_updated` |
+| `sync_lease` | table | single-row writer lease so one process writes the index |
+| `meta` | table | embedding dimension and model, schema notes |
+
+Triggers on `chunks` keep both FTS tables in sync automatically. A partial
+index on `embedded` makes pending-vector backfill cheap.
+
+### `memory.bleve` (Bleve, optional)
+
+A local, CGO-free lexical index. Its mapping uses:
+
+- `content` with the Russian analyzer (morphology, stop words);
+- `content_exact` with the simple analyzer (exact identifiers, no stemming);
+- stored `session_id`, `position`, `project_path`, `part_type`, `role`, `tool`,
+  `time_created`, `snippet` for coordinates and display.
+
+Bleve's own vector path (which needs CGO) is intentionally not used; vectors
+live in sqlite-vec. If the directory is missing or locked, search degrades to
+SQLite only.
+
+### `opencode.db` (read-only)
+
+The OpenCode source. It is opened with `mode=ro` and is never written. The
+index holds coordinates; `memory_read` recomputes them from this database so
+originals are always fresh.
+
+## Indexing pipeline
+
+`mcp-memory index` runs the full pipeline. Stages:
+
+1. **Extract.** Open `opencode.db` read-only, list sessions and parts.
+   Incremental: a session is processed only when it has no `sync_state` row
+   (new), its status is `error` (retry), or `time_updated` is newer than the
+   last indexed value. `--project` and `--limit` narrow the run.
+2. **Order.** `position` is assigned by ordering parts on
+   `(message.time_created, part.rowid)`, the only stable tie breaker.
+3. **Chunk.** Each part becomes one chunk: `text` and `tool` are embedded,
+   `patch` and `reasoning` go to FTS only. Tool output is capped at 4 KiB in
+   `content`; embedding text uses at most 6000 runes; `stemmed` is a
+   Snowball-russian copy for the second FTS table.
+4. **Embed (optional).** Chunks are sent to the Ollama `/api/embed` endpoint in
+   batches of 64 with retries and an on-disk cache. If the embedder is
+   unreachable, FTS rows are still written and vectors stay pending.
+5. **Store (SQLite).** One transaction per session: delete the old rows and
+   their vectors, insert the new chunks (triggers fill `fts_unicode` and
+   `fts_stem`), insert vectors, upsert `sessions` and `sync_state`.
+6. **Bleve (concurrent).** The same `[]chunk.Chunk` is sent over a small
+   buffered channel to a Bleve goroutine that deletes the session's old
+   documents and adds the new ones. A Bleve error is counted and reported but
+   never stops the SQLite path.
+7. **Backfill.** On every run, chunks with `embedded = 0` and a non-empty
+   `embed_text` get vectors filled in once the embedder is reachable. Nothing
+   is re-chunked; only vectors are computed.
+
+At query time the MCP server never writes: it reads originals from `opencode.db`
+and candidates from `memory.db` plus Bleve, and merges them (see below).
+
 ## Requirements
 
 - To use the npm wrapper: Node 18+ (for `npx`). No Go needed.

@@ -43,7 +43,7 @@ with `serve`. Nothing else is written to stdout, so the protocol stays clean.
 | `MCP_MEMORY_REPO`     | GitHub repo `owner/name` to download from          |
 | `MCP_MEMORY_BASE_URL` | Full base URL for release assets (mirror)          |
 | `MCP_MEMORY_CACHE`    | Directory to extract the binary into               |
-| `OPENCODE_CONFIG`          | `opencode.json` path used by `install`             |
+| `MCP_MEMORY_CONFIG`   | Config file used by `install` (default: global)    |
 
 Runtime configuration (database paths, embedder) uses the binary's own
 variables: `MEMORY_SQLITE`, `MEMORY_DB`, `MEMORY_BLEVE`, `MEMORY_EMBED_URL`,

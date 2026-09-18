@@ -27,7 +27,8 @@ Environment:
   MCP_MEMORY_REPO      GitHub repo "owner/name" to download from.
   MCP_MEMORY_BASE_URL  Full base URL for release assets (mirror).
   MCP_MEMORY_CACHE     Directory to extract the binary into.
-  OPENCODE_CONFIG           opencode.json path for "install".
+  MCP_MEMORY_CONFIG    Config file for "install" (default: the global
+                       OpenCode config, ~/.config/opencode/opencode.jsonc).
 `;
 
 // resolveVersion is the release version to download.

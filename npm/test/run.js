@@ -6,9 +6,23 @@ const os = require("os");
 const path = require("path");
 const { parse } = require("jsonc-parser");
 
-const { writeMemoryEntry } = require("../lib/config");
+const { writeMemoryEntry, candidatePaths } = require("../lib/config");
 const { assetName } = require("../lib/download");
 const { target } = require("../lib/platform");
+
+// install always targets the global OpenCode config, even when a wrapper such
+// as Orca exports OPENCODE_CONFIG_DIR.
+process.env.OPENCODE_CONFIG_DIR = "/tmp/orca/generated";
+const globalCandidates = candidatePaths();
+assert.ok(
+  globalCandidates.every((p) => p.includes(path.join(".config", "opencode"))),
+  `expected global config candidates, got ${globalCandidates.join(", ")}`
+);
+
+// MCP_MEMORY_CONFIG is the only way to point install elsewhere.
+process.env.MCP_MEMORY_CONFIG = "/tmp/custom/opencode.json";
+assert.deepStrictEqual(candidatePaths(), ["/tmp/custom/opencode.json"]);
+delete process.env.MCP_MEMORY_CONFIG;
 
 // Release asset naming must match the workflow.
 assert.strictEqual(

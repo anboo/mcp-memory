@@ -5,8 +5,8 @@ const os = require("os");
 const path = require("path");
 const { parse, modify, applyEdits } = require("jsonc-parser");
 
-// MEMORY_ENTRY is the MCP server block written into opencode.json. It uses
-// npx so the config never contains an absolute path to a binary.
+// MEMORY_ENTRY is the MCP server block written into the OpenCode config. It
+// uses npx so the config never contains an absolute path to a binary.
 const MEMORY_ENTRY = {
   type: "local",
   command: ["npx", "-y", "@devanboo/mcp-memory"],
@@ -14,21 +14,21 @@ const MEMORY_ENTRY = {
   timeout: 20000,
 };
 
-// configDir is the OpenCode global config directory.
+// configDir is the global OpenCode config directory. The install command
+// always targets the user's global config; the OPENCODE_CONFIG and
+// OPENCODE_CONFIG_DIR variables are intentionally ignored because wrappers
+// such as Orca point them at generated hook files that get rewritten.
 function configDir() {
-  if (process.env.OPENCODE_CONFIG_DIR) {
-    return process.env.OPENCODE_CONFIG_DIR;
-  }
   const xdg = process.env.XDG_CONFIG_HOME;
   const base = xdg ? xdg : path.join(os.homedir(), ".config");
   return path.join(base, "opencode");
 }
 
 // candidatePaths lists the files to consider, preferring the one the user
-// already maintains.
+// already maintains. MCP_MEMORY_CONFIG overrides the location explicitly.
 function candidatePaths() {
-  if (process.env.OPENCODE_CONFIG) {
-    return [process.env.OPENCODE_CONFIG];
+  if (process.env.MCP_MEMORY_CONFIG) {
+    return [path.resolve(process.env.MCP_MEMORY_CONFIG)];
   }
   const dir = configDir();
   return [path.join(dir, "opencode.jsonc"), path.join(dir, "opencode.json")];
