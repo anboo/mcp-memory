@@ -1,4 +1,4 @@
-// Package cli implements the subcommands of the single opencode-memory-mcp
+// Package cli implements the subcommands of the single mcp-memory
 // binary.
 //
 // The same binary runs the MCP server (serve) and builds the index (index and
@@ -10,13 +10,13 @@ import (
 	"fmt"
 	"os"
 
-	"opencode-rag/internal/version"
+	"github.com/anboo/mcp-memory/internal/version"
 )
 
-const usage = `opencode-memory-mcp - agent memory over the OpenCode session history
+const usage = `mcp-memory - agent memory over the OpenCode session history
 
 Usage:
-  opencode-memory-mcp [command]
+  mcp-memory [command]
 
 Commands:
   serve            Run the MCP server over stdio. This is the default when
@@ -27,7 +27,7 @@ Commands:
   version          Print the version.
   help             Print this help.
 
-Run "opencode-memory-mcp <command> --help" for the flags of a command.
+Run "mcp-memory <command> --help" for the flags of a command.
 `
 
 // Run dispatches args and returns the process exit code. With no arguments it

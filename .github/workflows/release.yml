@@ -45,16 +45,16 @@ jobs:
           mkdir -p dist
           CGO_ENABLED=0 go build \
             -trimpath \
-            -ldflags "-s -w -X opencode-rag/internal/version.Version=${version}" \
-            -o "dist/opencode-memory-mcp${ext}" ./cmd/opencode-memory-mcp
+            -ldflags "-s -w -X github.com/anboo/mcp-memory/internal/version.Version=${version}" \
+            -o "dist/mcp-memory${ext}" ./cmd/mcp-memory
           cp README.md dist/ 2>/dev/null || true
 
-          name="opencode-memory-mcp_${version}_${GOOS}_${GOARCH}"
+          name="mcp-memory_${version}_${GOOS}_${GOARCH}"
           tar -czf "${name}.tar.gz" -C dist .
 
       - uses: actions/upload-artifact@v4
         with:
-          name: opencode-memory-mcp_${{ matrix.goos }}_${{ matrix.goarch }}
+          name: mcp-memory_${{ matrix.goos }}_${{ matrix.goarch }}
           path: "*.tar.gz"
           if-no-files-found: error
 

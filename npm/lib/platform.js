@@ -14,14 +14,14 @@ function target() {
   const goarch = GOARCH[process.arch];
   if (!goos) {
     throw new Error(
-      `opencode-memory-mcp: unsupported platform "${process.platform}"; ` +
-        "build from source instead: https://github.com/anboo/opencode-memory-mcp"
+      `mcp-memory: unsupported platform "${process.platform}"; ` +
+        "build from source instead: https://github.com/anboo/mcp-memory"
     );
   }
   if (!goarch) {
     throw new Error(
-      `opencode-memory-mcp: unsupported architecture "${process.arch}"; ` +
-        "build from source instead: https://github.com/anboo/opencode-memory-mcp"
+      `mcp-memory: unsupported architecture "${process.arch}"; ` +
+        "build from source instead: https://github.com/anboo/mcp-memory"
     );
   }
   return { goos, goarch };
@@ -35,14 +35,14 @@ function binaryName(cmd) {
 // cacheDir is where the extracted binaries live. One directory per version,
 // so upgrades never race with a running server.
 function cacheDir(version) {
-  if (process.env.OPENCODE_MEMORY_CACHE) {
-    return path.resolve(process.env.OPENCODE_MEMORY_CACHE);
+  if (process.env.MCP_MEMORY_CACHE) {
+    return path.resolve(process.env.MCP_MEMORY_CACHE);
   }
   if (process.platform === "win32") {
     const base = process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local");
-    return path.join(base, "opencode-memory-mcp", version);
+    return path.join(base, "mcp-memory", version);
   }
-  return path.join(os.homedir(), ".cache", "opencode-memory-mcp", version);
+  return path.join(os.homedir(), ".cache", "mcp-memory", version);
 }
 
 module.exports = { target, binaryName, cacheDir };

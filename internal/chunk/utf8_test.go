@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"opencode-rag/internal/extract"
+	"github.com/anboo/mcp-memory/internal/extract"
 )
 
 // Binary tool output with a broken UTF-8 sequence.

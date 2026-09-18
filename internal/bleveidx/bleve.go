@@ -21,8 +21,8 @@ import (
 	"github.com/blevesearch/bleve/v2/mapping"
 	"github.com/blevesearch/bleve/v2/search/query"
 
-	"opencode-rag/internal/chunk"
-	"opencode-rag/internal/search"
+	"github.com/anboo/mcp-memory/internal/chunk"
+	"github.com/anboo/mcp-memory/internal/search"
 )
 
 // Index wraps an open Bleve index.

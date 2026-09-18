@@ -1,11 +1,11 @@
-# Contributing to opencode-rag
+# Contributing to mcp-memory
 
 This document is for people changing this repository. It describes how the
 system is put together, then how to build, test and run it.
 
 ## What this is
 
-`opencode-rag` is agent memory over the full OpenCode session history.
+`mcp-memory` is agent memory over the full OpenCode session history.
 
 OpenCode stores every session, message and message part in a single SQLite
 database (`~/.local/share/opencode/opencode.db`). After a session is compacted,
@@ -60,7 +60,7 @@ Two stores are used on purpose:
 
 ```
 cmd/
-  opencode-memory-mcp/   the single binary; dispatches to subcommands
+  mcp-memory/   the single binary; dispatches to subcommands
 internal/
   cli/                   subcommands: serve (MCP) and index/sessions/session
   config/                configuration from env
@@ -103,7 +103,7 @@ index. They need no network, no database and no Ollama. Verify the CGO-free
 build explicitly:
 
 ```bash
-CGO_ENABLED=0 go build ./cmd/opencode-memory-mcp
+CGO_ENABLED=0 go build ./cmd/mcp-memory
 ```
 
 The npm wrapper has its own tests (config merge, asset naming):
@@ -116,16 +116,16 @@ cd npm && npm install && npm test
 
 ```bash
 # Diagnostics first: what is in the source database?
-go run ./cmd/opencode-memory-mcp sessions
-go run ./cmd/opencode-memory-mcp session ses_xxx
+go run ./cmd/mcp-memory sessions
+go run ./cmd/mcp-memory session ses_xxx
 
 # Index a few sessions into a throwaway index.
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/opencode-memory-mcp index --limit 3
+  go run ./cmd/mcp-memory index --limit 3
 
 # Run the MCP server against that index.
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/opencode-memory-mcp serve
+  go run ./cmd/mcp-memory serve
 ```
 
 `opencode.db` is opened with `mode=ro`. Never write to it, not even in a tool
@@ -232,10 +232,10 @@ then:
 
 1. builds the `CGO_ENABLED=0` single binary for linux/darwin/windows on
    amd64/arm64 and injects the version with
-   `-ldflags "-X opencode-rag/internal/version.Version=<version>"`;
-2. attaches one `opencode-memory-mcp_<version>_<os>_<arch>.tar.gz` per target
+   `-ldflags "-X github.com/anboo/mcp-memory/internal/version.Version=<version>"`;
+2. attaches one `mcp-memory_<version>_<os>_<arch>.tar.gz` per target
    plus `checksums.txt` to a GitHub Release;
-3. publishes the npm wrapper `opencode-memory-mcp` at the same version, so the
+3. publishes the npm wrapper `@anboo/mcp-memory` at the same version, so the
    wrapper downloads the matching asset.
 
 Before the first release, add an `NPM_TOKEN` repository secret (an npm

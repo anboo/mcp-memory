@@ -10,12 +10,12 @@ import (
 	"os"
 	"time"
 
-	"opencode-rag/internal/bleveidx"
-	"opencode-rag/internal/config"
-	"opencode-rag/internal/embed"
-	"opencode-rag/internal/extract"
-	"opencode-rag/internal/indexer"
-	"opencode-rag/internal/store"
+	"github.com/anboo/mcp-memory/internal/bleveidx"
+	"github.com/anboo/mcp-memory/internal/config"
+	"github.com/anboo/mcp-memory/internal/embed"
+	"github.com/anboo/mcp-memory/internal/extract"
+	"github.com/anboo/mcp-memory/internal/indexer"
+	"github.com/anboo/mcp-memory/internal/store"
 )
 
 // indexCmd builds or updates the local index.
@@ -27,7 +27,7 @@ func indexCmd(args []string) int {
 	noBleve := fs.Bool("no-bleve", false, "do not build or update the Bleve index")
 	backfill := fs.Bool("backfill", true, "compute vectors for chunks that have none yet")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp index [flags]")
+		fmt.Fprintln(fs.Output(), "Usage: mcp-memory index [flags]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -52,7 +52,7 @@ func indexCmd(args []string) int {
 func sessionsCmd(args []string) int {
 	fs := flag.NewFlagSet("sessions", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp sessions")
+		fmt.Fprintln(fs.Output(), "Usage: mcp-memory sessions")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -77,7 +77,7 @@ func sessionCmd(args []string) int {
 	fs := flag.NewFlagSet("session", flag.ContinueOnError)
 	dialogN := fs.Int("dialog-limit", 40, "maximum parts printed in a dialog dump")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp session <session_id> [flags]")
+		fmt.Fprintln(fs.Output(), "Usage: mcp-memory session <session_id> [flags]")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

@@ -1,4 +1,4 @@
-# opencode-memory-mcp
+# mcp-memory
 
 Agent memory over the full OpenCode session history, served over MCP (stdio).
 
@@ -9,7 +9,7 @@ it, and runs it. There is no compiler and no database server involved.
 ## Install
 
 ```bash
-npx -y opencode-memory-mcp install
+npx -y @anboo/mcp-memory install
 ```
 
 `install` downloads the binary and adds the `memory` MCP server to your global
@@ -18,18 +18,18 @@ npx -y opencode-memory-mcp install
 Then build the index once:
 
 ```bash
-npx -y opencode-memory-mcp index
+npx -y @anboo/mcp-memory index
 ```
 
 ## Commands
 
 ```bash
-npx -y opencode-memory-mcp install     # download the binary, write MCP config
-npx -y opencode-memory-mcp index       # build or update the local search index
-npx -y opencode-memory-mcp serve       # run the MCP server (the MCP default)
-npx -y opencode-memory-mcp sessions    # summary of the OpenCode database
-npx -y opencode-memory-mcp session ID  # dump one session
-npx -y opencode-memory-mcp version
+npx -y @anboo/mcp-memory install     # download the binary, write MCP config
+npx -y @anboo/mcp-memory index       # build or update the local search index
+npx -y @anboo/mcp-memory serve       # run the MCP server (the MCP default)
+npx -y @anboo/mcp-memory sessions    # summary of the OpenCode database
+npx -y @anboo/mcp-memory session ID  # dump one session
+npx -y @anboo/mcp-memory version
 ```
 
 An MCP client launches the wrapper with no arguments; it then runs the binary
@@ -39,10 +39,10 @@ with `serve`. Nothing else is written to stdout, so the protocol stays clean.
 
 | Variable                   | Description                                        |
 |----------------------------|----------------------------------------------------|
-| `OPENCODE_MEMORY_VERSION`  | Release version to download (default: this package)|
-| `OPENCODE_MEMORY_REPO`     | GitHub repo `owner/name` to download from          |
-| `OPENCODE_MEMORY_BASE_URL` | Full base URL for release assets (mirror)          |
-| `OPENCODE_MEMORY_CACHE`    | Directory to extract the binary into               |
+| `MCP_MEMORY_VERSION`  | Release version to download (default: this package)|
+| `MCP_MEMORY_REPO`     | GitHub repo `owner/name` to download from          |
+| `MCP_MEMORY_BASE_URL` | Full base URL for release assets (mirror)          |
+| `MCP_MEMORY_CACHE`    | Directory to extract the binary into               |
 | `OPENCODE_CONFIG`          | `opencode.json` path used by `install`             |
 
 Runtime configuration (database paths, embedder) uses the binary's own
@@ -51,4 +51,4 @@ variables: `MEMORY_SQLITE`, `MEMORY_DB`, `MEMORY_BLEVE`, `MEMORY_EMBED_URL`,
 defaults.
 
 See the repository for the full documentation:
-https://github.com/anboo/opencode-memory-mcp
+https://github.com/anboo/mcp-memory

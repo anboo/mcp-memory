@@ -9,11 +9,11 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
-	"opencode-rag/internal/version"
+	"github.com/anboo/mcp-memory/internal/version"
 )
 
 // serverName identifies this MCP server.
-const serverName = "opencode-memory"
+const serverName = "mcp-memory"
 
 // instructions is the server-level prompt. It is returned in the initialize
 // response and tells the model when and how to use the memory tools.

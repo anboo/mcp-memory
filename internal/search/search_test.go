@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"opencode-rag/internal/chunk"
-	"opencode-rag/internal/store"
+	"github.com/anboo/mcp-memory/internal/chunk"
+	"github.com/anboo/mcp-memory/internal/store"
 )
 
 func TestRRFMerge(t *testing.T) {

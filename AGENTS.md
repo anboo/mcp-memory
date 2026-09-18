@@ -4,7 +4,7 @@ Instructions for coding agents working in this repository.
 
 ## What this repo is
 
-`opencode-rag` turns the full OpenCode session history into a local search
+`mcp-memory` turns the full OpenCode session history into a local search
 index and exposes it through an MCP server. Production retrieval is a single
 local SQLite file (`memory.db`) with FTS5 plus sqlite-vec, an optional Bleve
 secondary lexical index, and an optional HTTP embedder. There is no PostgreSQL
@@ -39,7 +39,7 @@ go vet ./...
 go test ./...
 
 # CGO-free production binary (single binary, subcommands):
-CGO_ENABLED=0 go build -o bin/opencode-memory-mcp ./cmd/opencode-memory-mcp
+CGO_ENABLED=0 go build -o bin/mcp-memory ./cmd/mcp-memory
 ```
 
 Run a single package's tests:
@@ -61,16 +61,16 @@ cd research && go build ./...
 
 ```bash
 # Diagnostics against the real database.
-go run ./cmd/opencode-memory-mcp sessions
-go run ./cmd/opencode-memory-mcp session ses_xxx
+go run ./cmd/mcp-memory sessions
+go run ./cmd/mcp-memory session ses_xxx
 
 # Index a few sessions into a throwaway index (never touches opencode.db).
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/opencode-memory-mcp index --limit 3
+  go run ./cmd/mcp-memory index --limit 3
 
 # Serve MCP over stdio against that index.
 MEMORY_DB=/tmp/memory.db MEMORY_BLEVE=/tmp/memory.bleve \
-  go run ./cmd/opencode-memory-mcp serve
+  go run ./cmd/mcp-memory serve
 ```
 
 Do not run the MCP server with no arguments in a terminal: with no subcommand
@@ -84,7 +84,7 @@ are unavailable.
 ## Layout
 
 ```
-cmd/opencode-memory-mcp/  single binary; dispatches to subcommands
+cmd/mcp-memory/  single binary; dispatches to subcommands
 internal/cli/      subcommands: serve (MCP) and index/sessions/session
 internal/config/   environment configuration
 internal/extract/  read opencode.db (read-only): sessions, messages, parts

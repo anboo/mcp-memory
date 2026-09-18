@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"opencode-rag/internal/version"
+	"github.com/anboo/mcp-memory/internal/version"
 )
 
 // capture runs fn with stdout and stderr redirected to pipes and returns what

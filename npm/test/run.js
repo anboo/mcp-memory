@@ -13,18 +13,18 @@ const { target } = require("../lib/platform");
 // Release asset naming must match the workflow.
 assert.strictEqual(
   assetName("1.2.3", "linux", "amd64"),
-  "opencode-memory-mcp_1.2.3_linux_amd64.tar.gz"
+  "mcp-memory_1.2.3_linux_amd64.tar.gz"
 );
 assert.strictEqual(
   assetName("1.2.3", "windows", "arm64"),
-  "opencode-memory-mcp_1.2.3_windows_arm64.tar.gz"
+  "mcp-memory_1.2.3_windows_arm64.tar.gz"
 );
 
 // target resolves on supported CI platforms.
 const t = target();
 assert.ok(t.goos && t.goarch, "target should resolve");
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-memory-test-"));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-memory-test-"));
 const file = path.join(dir, "opencode.jsonc");
 
 // A missing file is created with the memory entry.
@@ -32,7 +32,7 @@ const first = writeMemoryEntry(file);
 assert.ok(first.changed, "first write should change the file");
 let doc = parse(fs.readFileSync(file, "utf8"));
 assert.strictEqual(doc.mcp.memory.type, "local");
-assert.deepStrictEqual(doc.mcp.memory.command, ["npx", "-y", "opencode-memory-mcp"]);
+assert.deepStrictEqual(doc.mcp.memory.command, ["npx", "-y", "@anboo/mcp-memory"]);
 
 // Re-running keeps the existing entry unless forced.
 const second = writeMemoryEntry(file);

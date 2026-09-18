@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"opencode-rag/internal/extract"
+	"github.com/anboo/mcp-memory/internal/extract"
 )
 
 func testPart(typ string, raw string) extract.PartWithPos {

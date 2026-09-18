@@ -7,14 +7,14 @@ import (
 	"log"
 	"time"
 
-	"opencode-rag/internal/bleveidx"
-	"opencode-rag/internal/config"
-	"opencode-rag/internal/embed"
-	"opencode-rag/internal/extract"
-	"opencode-rag/internal/mcp"
-	"opencode-rag/internal/search"
-	"opencode-rag/internal/store"
-	"opencode-rag/internal/version"
+	"github.com/anboo/mcp-memory/internal/bleveidx"
+	"github.com/anboo/mcp-memory/internal/config"
+	"github.com/anboo/mcp-memory/internal/embed"
+	"github.com/anboo/mcp-memory/internal/extract"
+	"github.com/anboo/mcp-memory/internal/mcp"
+	"github.com/anboo/mcp-memory/internal/search"
+	"github.com/anboo/mcp-memory/internal/store"
+	"github.com/anboo/mcp-memory/internal/version"
 )
 
 // serve runs the MCP server over stdio. It reads originals from the OpenCode
@@ -24,14 +24,14 @@ func serve(args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	fs.Usage = func() {
-		fmt.Fprintln(fs.Output(), "Usage: opencode-memory-mcp serve")
+		fmt.Fprintln(fs.Output(), "Usage: mcp-memory serve")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *showVersion {
-		fmt.Println("opencode-memory-mcp " + version.Version)
+		fmt.Println("mcp-memory " + version.Version)
 		return 0
 	}
 

@@ -20,8 +20,8 @@ import (
 	"sort"
 	"strings"
 
-	"opencode-rag/internal/stem"
-	"opencode-rag/internal/store"
+	"github.com/anboo/mcp-memory/internal/stem"
+	"github.com/anboo/mcp-memory/internal/store"
 )
 
 // DefaultTopK is how many candidates each source contributes before merging.

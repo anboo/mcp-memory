@@ -8,7 +8,7 @@ run(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (err) => {
-    process.stderr.write(`opencode-memory-mcp: ${err.message}\n`);
+    process.stderr.write(`mcp-memory: ${err.message}\n`);
     process.exitCode = 1;
   }
 );

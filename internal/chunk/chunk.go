@@ -13,7 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"opencode-rag/internal/extract"
+	"github.com/anboo/mcp-memory/internal/extract"
 )
 
 // MaxToolOutputLen caps tool output inside content (used for embeddings and

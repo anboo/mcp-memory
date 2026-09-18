@@ -8,26 +8,26 @@ const tar = require("tar");
 
 const { target, binaryName, cacheDir } = require("./platform");
 
-const DEFAULT_REPO = "anboo/opencode-memory-mcp";
-const BIN_NAME = "opencode-memory-mcp";
+const DEFAULT_REPO = "anboo/mcp-memory";
+const BIN_NAME = "mcp-memory";
 
 // releaseBase is the base URL for a version's release assets. It can be
 // pointed at a mirror or a local file server for testing.
 function releaseBase(version) {
-  if (process.env.OPENCODE_MEMORY_BASE_URL) {
-    return `${process.env.OPENCODE_MEMORY_BASE_URL.replace(/\/$/, "")}/v${version}`;
+  if (process.env.MCP_MEMORY_BASE_URL) {
+    return `${process.env.MCP_MEMORY_BASE_URL.replace(/\/$/, "")}/v${version}`;
   }
-  const repo = (process.env.OPENCODE_MEMORY_REPO || DEFAULT_REPO).replace(/^\/|\/$/g, "");
+  const repo = (process.env.MCP_MEMORY_REPO || DEFAULT_REPO).replace(/^\/|\/$/g, "");
   return `https://github.com/${repo}/releases/download/v${version}`;
 }
 
 // assetName mirrors the naming used by .github/workflows/release.yml.
 function assetName(version, goos, goarch) {
-  return `opencode-memory-mcp_${version}_${goos}_${goarch}.tar.gz`;
+  return `mcp-memory_${version}_${goos}_${goarch}.tar.gz`;
 }
 
 function log(message) {
-  process.stderr.write(`opencode-memory-mcp: ${message}\n`);
+  process.stderr.write(`mcp-memory: ${message}\n`);
 }
 
 function sha256(file) {
@@ -89,7 +89,7 @@ async function ensure(version) {
   const base = releaseBase(version);
   fs.mkdirSync(dir, { recursive: true });
 
-  const tmp = path.join(os.tmpdir(), `opencode-memory-${process.pid}-${Date.now()}-${asset}`);
+  const tmp = path.join(os.tmpdir(), `mcp-memory-${process.pid}-${Date.now()}-${asset}`);
   try {
     log(`downloading ${asset} (${goos}/${goarch})`);
     await downloadTo(`${base}/${asset}`, tmp);

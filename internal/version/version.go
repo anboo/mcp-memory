@@ -2,7 +2,7 @@
 //
 // The release workflow injects the value with
 //
-//	-ldflags "-X opencode-rag/internal/version.Version=1.2.3"
+//	-ldflags "-X github.com/anboo/mcp-memory/internal/version.Version=1.2.3"
 //
 // so the default here is only used for local, untagged builds.
 package version

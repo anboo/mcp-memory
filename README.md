@@ -1,4 +1,4 @@
-# opencode-rag
+# mcp-memory
 
 Agent memory over the full OpenCode session history.
 
@@ -79,29 +79,29 @@ No CGO and no external database are required. `CGO_ENABLED=0` works.
 ### 1. Install with one command
 
 ```bash
-npx -y opencode-memory-mcp install
+npx -y @anboo/mcp-memory install
 ```
 
 This downloads the prebuilt CGO-free binary for your platform, caches it under
-`~/.cache/opencode-memory-mcp/`, and adds the `memory` MCP server to your
+`~/.cache/mcp-memory/`, and adds the `memory` MCP server to your
 global `opencode.json(c)`. It never overwrites an existing `memory` entry
 unless you pass `--force`. Restart OpenCode afterwards.
 
 Then build the index once (see step 3):
 
 ```bash
-npx -y opencode-memory-mcp index
+npx -y @anboo/mcp-memory index
 ```
 
 `npx` resolves the latest published version, so upgrades are automatic. If you
 do not want Node, download the archive for your platform from the GitHub
-Releases page (it contains a single binary, `opencode-memory-mcp`), or build
+Releases page (it contains a single binary, `mcp-memory`), or build
 from source in step 2.
 
 ### 2. Build from source (alternative)
 
 ```bash
-go build -o bin/opencode-memory-mcp ./cmd/opencode-memory-mcp
+go build -o bin/mcp-memory ./cmd/mcp-memory
 ```
 
 One binary contains everything: the MCP server and the indexer are subcommands.
@@ -109,17 +109,17 @@ One binary contains everything: the MCP server and the indexer are subcommands.
 ### 3. Index the history
 
 The examples use the npm wrapper; for a local build replace
-`npx -y opencode-memory-mcp` with `bin/opencode-memory-mcp`.
+`npx -y @anboo/mcp-memory` with `bin/mcp-memory`.
 
 ```bash
 # Zero-config local mode. MEMORY_SQLITE defaults to the standard OpenCode path.
-npx -y opencode-memory-mcp index
+npx -y @anboo/mcp-memory index
 
 # Index only a few sessions (useful for a first try).
-npx -y opencode-memory-mcp index --limit 3
+npx -y @anboo/mcp-memory index --limit 3
 
 # Index one project only.
-npx -y opencode-memory-mcp index --project /var/www/my-repo
+npx -y @anboo/mcp-memory index --project /var/www/my-repo
 ```
 
 Re-running `index` is incremental: a session is re-indexed only when its
@@ -128,11 +128,11 @@ Re-running `index` is incremental: a session is re-indexed only when its
 Useful commands and flags:
 
 ```bash
-npx -y opencode-memory-mcp sessions        # whole database summary (diagnostics)
-npx -y opencode-memory-mcp session ses_xxx # dump one session dialog (diagnostics)
-npx -y opencode-memory-mcp index --limit 10          # cap the number of sessions
-npx -y opencode-memory-mcp index --no-bleve          # skip the Bleve index
-npx -y opencode-memory-mcp index --embed-pause 150ms # throttle embedding batches
+npx -y @anboo/mcp-memory sessions        # whole database summary (diagnostics)
+npx -y @anboo/mcp-memory session ses_xxx # dump one session dialog (diagnostics)
+npx -y @anboo/mcp-memory index --limit 10          # cap the number of sessions
+npx -y @anboo/mcp-memory index --no-bleve          # skip the Bleve index
+npx -y @anboo/mcp-memory index --embed-pause 150ms # throttle embedding batches
 ```
 
 ### 4. Start the embedding server (optional)
@@ -157,7 +157,7 @@ binary:
   "mcp": {
     "memory": {
       "type": "local",
-      "command": ["npx", "-y", "opencode-memory-mcp"],
+      "command": ["npx", "-y", "@anboo/mcp-memory"],
       "enabled": true,
       "timeout": 20000
     }
@@ -170,7 +170,7 @@ binary:
   "mcp": {
     "memory": {
       "type": "local",
-      "command": ["/var/www/opencode-rag/bin/opencode-memory-mcp", "serve"],
+      "command": ["/var/www/mcp-memory/bin/mcp-memory", "serve"],
       "enabled": true
     }
   }
@@ -339,7 +339,7 @@ indexer creates and updates it; the MCP server only opens it.
 
 ```
 cmd/
-  opencode-memory-mcp/   # the single binary; dispatches to subcommands
+  mcp-memory/   # the single binary; dispatches to subcommands
 internal/
   cli/                   # subcommands: serve (MCP) and index/sessions/session
   config/                # env configuration
@@ -373,7 +373,7 @@ Tests do not require a database, network or Ollama. They use temporary
 SQLite files, a fake embedder and a temporary Bleve index. CGO is not needed:
 
 ```bash
-CGO_ENABLED=0 go build ./cmd/opencode-memory-mcp
+CGO_ENABLED=0 go build ./cmd/mcp-memory
 
 # npm wrapper tests (config merge, asset naming)
 cd npm && npm install && npm test

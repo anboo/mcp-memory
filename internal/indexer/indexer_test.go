@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"opencode-rag/internal/bleveidx"
-	"opencode-rag/internal/extract"
-	"opencode-rag/internal/search"
-	"opencode-rag/internal/store"
+	"github.com/anboo/mcp-memory/internal/bleveidx"
+	"github.com/anboo/mcp-memory/internal/extract"
+	"github.com/anboo/mcp-memory/internal/search"
+	"github.com/anboo/mcp-memory/internal/store"
 
 	_ "modernc.org/sqlite"
 	_ "modernc.org/sqlite/vec"

@@ -6,9 +6,9 @@ const pkg = require("../package.json");
 const { ensure } = require("./download");
 const { resolve, writeMemoryEntry } = require("./config");
 
-const help = `opencode-memory-mcp - agent memory over the OpenCode session history
+const help = `mcp-memory - agent memory over the OpenCode session history
 
-Usage: npx -y opencode-memory-mcp [command]
+Usage: npx -y @anboo/mcp-memory [command]
 
 Commands:
   install          Download the binary and add the "memory" MCP server to
@@ -22,24 +22,24 @@ Commands:
   help             Print this help.
 
 Environment:
-  OPENCODE_MEMORY_VERSION   Release version to download (default: this
+  MCP_MEMORY_VERSION   Release version to download (default: this
                             package's version).
-  OPENCODE_MEMORY_REPO      GitHub repo "owner/name" to download from.
-  OPENCODE_MEMORY_BASE_URL  Full base URL for release assets (mirror).
-  OPENCODE_MEMORY_CACHE     Directory to extract the binary into.
+  MCP_MEMORY_REPO      GitHub repo "owner/name" to download from.
+  MCP_MEMORY_BASE_URL  Full base URL for release assets (mirror).
+  MCP_MEMORY_CACHE     Directory to extract the binary into.
   OPENCODE_CONFIG           opencode.json path for "install".
 `;
 
 // resolveVersion is the release version to download.
 function resolveVersion() {
-  const override = process.env.OPENCODE_MEMORY_VERSION;
+  const override = process.env.MCP_MEMORY_VERSION;
   if (override) {
     return override.replace(/^v/, "");
   }
   if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) {
     throw new Error(
       `this is a development build (${pkg.version}); ` +
-        "set OPENCODE_MEMORY_VERSION to a released version or build from source"
+        "set MCP_MEMORY_VERSION to a released version or build from source"
     );
   }
   return pkg.version;
@@ -81,7 +81,7 @@ async function install(args) {
   console.log(`Binary: ${bin}`);
   console.log("");
   console.log("Restart OpenCode, then build the index once:");
-  console.log("  npx -y opencode-memory-mcp index");
+  console.log("  npx -y @anboo/mcp-memory index");
   return 0;
 }
 
